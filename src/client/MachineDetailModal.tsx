@@ -62,6 +62,8 @@ function DetailPane({ machine, history, processes }: { machine: MachineWithLates
   return (
     <aside className="detail-panel">
       <dl className="metadata">
+        <div><dt>Platform</dt><dd>{machine.platform || "-"}</dd></div>
+        <div><dt>Owner</dt><dd>{machine.owner || "-"}</dd></div>
         <div><dt>Remote</dt><dd>{latest?.remoteHost || "-"}</dd></div>
         <div><dt>SSH user</dt><dd>{latest?.sshUser || "-"}</dd></div>
         <div><dt>Uptime</dt><dd>{latest?.uptime || "-"}</dd></div>

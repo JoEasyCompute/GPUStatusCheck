@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { MachineWithLatest } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
-import { formatPlatformOwner, sortMachines, type MachineSort, type MachineSortKey } from "./machineSort";
+import { sortMachines, type MachineSort, type MachineSortKey } from "./machineSort";
 
 export function MachineTable({
   machines,
@@ -32,7 +32,7 @@ export function MachineTable({
             <SortableHeader label="Machine" sortKey="name" sort={sort} onSort={toggleSort} />
             <SortableHeader label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
             <SortableHeader label="IP" sortKey="ip" sort={sort} onSort={toggleSort} />
-            <SortableHeader label="Platform:Owner" sortKey="platformOwner" sort={sort} onSort={toggleSort} />
+            <SortableHeader label="Owner" sortKey="owner" sort={sort} onSort={toggleSort} />
             <SortableHeader label="GPU type" sortKey="gpuType" sort={sort} onSort={toggleSort} />
             <SortableHeader label="GPUs" sortKey="gpus" sort={sort} onSort={toggleSort} align="num" />
             <SortableHeader label="Jobs" sortKey="jobs" sort={sort} onSort={toggleSort} />
@@ -72,7 +72,7 @@ export function MachineTable({
                   {machine.ip}
                 </button>
               </td>
-              <td>{formatPlatformOwner(machine) || "-"}</td>
+              <td>{machine.owner || "-"}</td>
               <td>{machine.latest?.gpuType || "-"}</td>
               <td className="num">{machine.latest?.gpuCount ?? "-"}</td>
               <td><GpuJobPills latest={machine.latest} /></td>

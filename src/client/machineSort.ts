@@ -1,6 +1,6 @@
 import type { MachineWithLatest } from "../shared/types";
 
-export type MachineSortKey = "name" | "status" | "ip" | "platformOwner" | "gpuType" | "gpus" | "jobs" | "notes" | "power" | "temp" | "checked";
+export type MachineSortKey = "name" | "status" | "ip" | "owner" | "gpuType" | "gpus" | "jobs" | "notes" | "power" | "temp" | "checked";
 
 export type MachineSort = {
   key: MachineSortKey;
@@ -22,8 +22,8 @@ function sortValue(machine: MachineWithLatest, key: MachineSortKey): string | nu
       return machine.latest?.status ?? "unknown";
     case "ip":
       return machine.ip;
-    case "platformOwner":
-      return formatPlatformOwner(machine);
+    case "owner":
+      return machine.owner ?? "";
     case "gpuType":
       return machine.latest?.gpuType ?? "";
     case "gpus":
@@ -51,13 +51,4 @@ function compareValues(left: string | number, right: string | number): number {
 function numericOrMissing(value: string | undefined): number {
   const number = Number(value);
   return Number.isFinite(number) ? number : -1;
-}
-
-export function formatPlatformOwner(machine: MachineWithLatest): string {
-  const platform = machine.platform?.trim() ?? "";
-  const owner = machine.owner?.trim() ?? "";
-  if (!platform && !owner) {
-    return "";
-  }
-  return `${platform}:${owner}`;
 }
