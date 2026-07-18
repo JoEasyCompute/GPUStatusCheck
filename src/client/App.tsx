@@ -138,7 +138,7 @@ export function App() {
   }
 
   async function copySshCommand(machine: MachineWithLatest) {
-    const command = buildSshCommand(machine, config?.sshUser || "ezc");
+    const command = buildSshCommand(machine, machine.latest?.sshUser || config?.sshUser || "ezc");
     try {
       await copyText(command);
       setCopyMessage(`Copied ${command}`);

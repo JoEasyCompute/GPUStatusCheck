@@ -128,6 +128,58 @@ class GPUStatusCheckTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["timeout"], 45)
         self.assertEqual(cmd[-1], "1")
 
+    def test_run_ssh_probe_retries_with_fallback_user_on_auth_failure(self) -> None:
+        denied = subprocess_completed(
+            returncode=255,
+            stdout="",
+            stderr="ezc@10.0.0.5: Permission denied (publickey).",
+        )
+        succeeded = subprocess_completed(
+            returncode=0,
+            stdout=(
+                "REMOTE_HOST=alpha\n"
+                "NVIDIA_SMI_RC=0\n"
+                "GPU_COUNT=1\n"
+                "GPU_JOBS=D\n"
+                "BUS_OFF=0\n"
+            ),
+            stderr="",
+        )
+
+        with patch("gpu_status_check.subprocess.run", side_effect=[denied, succeeded]) as run:
+            result = run_ssh_probe(
+                Machine(name="alpha", ip="10.0.0.5"),
+                user="ezc",
+                key_path="~/.ssh/test-key",
+                timeout=10,
+                fallback_user="ubuntu",
+            )
+
+        self.assertEqual(run.call_count, 2)
+        self.assertIn("ezc@10.0.0.5", run.call_args_list[0].args[0])
+        self.assertIn("ubuntu@10.0.0.5", run.call_args_list[1].args[0])
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.ssh_user, "ubuntu")
+
+    def test_run_ssh_probe_does_not_retry_on_network_failure(self) -> None:
+        unreachable = subprocess_completed(
+            returncode=255,
+            stdout="",
+            stderr="ssh: connect to host 10.0.0.5 port 22: Network is unreachable",
+        )
+
+        with patch("gpu_status_check.subprocess.run", return_value=unreachable) as run:
+            result = run_ssh_probe(
+                Machine(name="alpha", ip="10.0.0.5"),
+                user="ezc",
+                key_path="~/.ssh/test-key",
+                timeout=10,
+                fallback_user="ubuntu",
+            )
+
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(result.status, "ssh_failed")
+
     def test_run_ssh_probe_reports_probe_timeout(self) -> None:
         with patch(
             "gpu_status_check.subprocess.run",

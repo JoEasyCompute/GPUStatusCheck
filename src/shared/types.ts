@@ -83,6 +83,7 @@ export type ProbeResult = {
   uptime?: string;
   sshOk: boolean;
   sshError?: string;
+  sshUser?: string;
   remoteHost?: string;
   nvidiaSmiRc?: number | null;
   gpuCount?: number | null;

@@ -30,6 +30,7 @@ export class PollScheduler {
     private readonly probeMachine: ProbeMachine = (machine) =>
       runProbe(machine, {
         user: config.user,
+        fallbackUser: config.fallbackUser,
         keyPath: config.keyPath,
         connectTimeoutSeconds: config.connectTimeoutSeconds,
         probeTimeoutSeconds: config.probeTimeoutSeconds,

@@ -6,6 +6,7 @@ export type AppConfig = {
   dbPath: string;
   envPath: string;
   user: string;
+  fallbackUser: string;
   keyPath: string;
   connectTimeoutSeconds: number;
   probeTimeoutSeconds: number;
@@ -33,6 +34,7 @@ export function loadConfig(env = process.env): AppConfig {
     dbPath: value("GPUCHECK_DB") || "data/gpu-status.sqlite",
     envPath,
     user: value("GPUCHECK_USER") || "ezc",
+    fallbackUser: value("GPUCHECK_FALLBACK_USER") ?? "ubuntu",
     keyPath: value("GPUCHECK_KEY") || "~/.ssh/EZC-HydraHost",
     connectTimeoutSeconds: numberEnv(value("GPUCHECK_TIMEOUT"), 10),
     probeTimeoutSeconds: numberEnv(value("GPUCHECK_PROBE_TIMEOUT"), 60),

@@ -77,6 +77,7 @@ class ProbeResult:
     uptime: str = ""
     ssh_ok: bool = False
     ssh_error: str = ""
+    ssh_user: str = ""
     remote_host: str = ""
     nvidia_smi_rc: Optional[int] = None
     gpu_count: Optional[int] = None
@@ -453,6 +454,12 @@ REMOTE_SCRIPT_PATH = Path(__file__).resolve().parent / "scripts" / "remote-probe
 REMOTE_SCRIPT = REMOTE_SCRIPT_PATH.read_text()
 
 
+AUTH_FAILURE_RE = re.compile(
+    r"permission denied|authentication|publickey|no supported authentication methods",
+    re.IGNORECASE,
+)
+
+
 def run_ssh_probe(
     machine: Machine,
     user: str,
@@ -460,6 +467,26 @@ def run_ssh_probe(
     timeout: int,
     probe_timeout: int = DEFAULT_PROBE_TIMEOUT,
     check_logs: bool = True,
+    fallback_user: str = "",
+) -> ProbeResult:
+    """Probe as `user`; on an auth-shaped SSH failure retry as `fallback_user`."""
+    primary = _run_ssh_probe_as(machine, user, key_path, timeout, probe_timeout, check_logs)
+    if primary.status != "ssh_failed":
+        return primary
+    fallback = fallback_user.strip()
+    if not fallback or fallback == user or not AUTH_FAILURE_RE.search(primary.ssh_error):
+        return primary
+    retried = _run_ssh_probe_as(machine, fallback, key_path, timeout, probe_timeout, check_logs)
+    return primary if retried.status == "ssh_failed" else retried
+
+
+def _run_ssh_probe_as(
+    machine: Machine,
+    user: str,
+    key_path: str,
+    timeout: int,
+    probe_timeout: int,
+    check_logs: bool,
 ) -> ProbeResult:
     result = ProbeResult(
         name=machine.name,
@@ -516,6 +543,7 @@ def run_ssh_probe(
         return result
 
     result.ssh_ok = True
+    result.ssh_user = user
     stdout = proc.stdout or ""
 
     result.remote_host = _extract_scalar(stdout, "REMOTE_HOST") or ""
@@ -645,6 +673,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Probe GPU health over SSH.")
     parser.add_argument("--machines", default="machines.csv", help="CSV file with name,ip rows")
     parser.add_argument("--user", help="SSH username")
+    parser.add_argument("--fallback-user", help="Username to retry with on SSH auth failure (default ubuntu; empty disables)")
     parser.add_argument("--key", help="SSH private key path")
     parser.add_argument("--timeout", type=int, help="SSH connect timeout in seconds")
     parser.add_argument(
@@ -685,6 +714,7 @@ def main() -> int:
 
     env_file = load_env_file(Path(".env"))
     user = resolve_setting("GPUCHECK_USER", env_file, args.user, DEFAULT_USER)
+    fallback_user = resolve_setting("GPUCHECK_FALLBACK_USER", env_file, args.fallback_user, "ubuntu")
     key = resolve_setting("GPUCHECK_KEY", env_file, args.key, DEFAULT_KEY)
     timeout = int(resolve_setting("GPUCHECK_TIMEOUT", env_file, str(args.timeout) if args.timeout is not None else None, str(DEFAULT_TIMEOUT)))
     probe_timeout = int(resolve_setting("GPUCHECK_PROBE_TIMEOUT", env_file, str(args.probe_timeout) if args.probe_timeout is not None else None, str(DEFAULT_PROBE_TIMEOUT)))
@@ -758,6 +788,7 @@ def main() -> int:
                     timeout,
                     probe_timeout,
                     check_logs,
+                    fallback_user,
                 ): machine
                 for machine in machines
             }

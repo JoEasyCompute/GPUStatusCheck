@@ -141,6 +141,7 @@ export function createDatabase(dbPath: string) {
     ensureColumn(db, "machines", "maintenance", "INTEGER NOT NULL DEFAULT 0");
     ensureColumn(db, "machines", "expected_gpu_count", "INTEGER");
     ensureColumn(db, "probe_results", "gpu_type", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(db, "probe_results", "ssh_user", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_metrics", "pci_bus_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_metrics", "power_limit_w", "REAL");
     ensureColumn(db, "gpu_metrics", "graphics_clock_mhz", "INTEGER");
@@ -195,12 +196,12 @@ export function createDatabase(dbPath: string) {
     const checkedAt = new Date().toISOString();
     const info = db.prepare(`
       INSERT INTO probe_results (
-        poll_run_id, machine_id, checked_at, status, ssh_ok, ssh_error, remote_host, uptime,
+        poll_run_id, machine_id, checked_at, status, ssh_ok, ssh_error, ssh_user, remote_host, uptime,
         nvidia_smi_rc, gpu_count, gpu_type, gpu_jobs, gpu_power_w, gpu_avg_temp_c, bus_off_suspected,
         bus_off_reason, kernel_hits, nvidia_smi_output, nvidia_smi_error, duration_ms
       )
       VALUES (
-        @pollRunId, @machineId, @checkedAt, @status, @sshOk, @sshError, @remoteHost, @uptime,
+        @pollRunId, @machineId, @checkedAt, @status, @sshOk, @sshError, @sshUser, @remoteHost, @uptime,
         @nvidiaSmiRc, @gpuCount, @gpuType, @gpuJobs, @gpuPowerW, @gpuAvgTempC, @busOffSuspected,
         @busOffReason, @kernelHits, @nvidiaSmiOutput, @nvidiaSmiError, @durationMs
       )
@@ -211,6 +212,7 @@ export function createDatabase(dbPath: string) {
       status: result.status,
       sshOk: result.sshOk ? 1 : 0,
       sshError: result.sshError ?? "",
+      sshUser: result.sshUser ?? "",
       remoteHost: result.remoteHost ?? "",
       uptime: result.uptime ?? "",
       nvidiaSmiRc: result.nvidiaSmiRc ?? null,
@@ -265,7 +267,7 @@ export function createDatabase(dbPath: string) {
 
   function listMachines(): MachineWithLatest[] {
     const rows = db.prepare(`
-      SELECT m.*, pr.id AS latest_id, pr.checked_at, pr.status, pr.ssh_ok, pr.ssh_error, pr.remote_host,
+      SELECT m.*, pr.id AS latest_id, pr.checked_at, pr.status, pr.ssh_ok, pr.ssh_error, pr.ssh_user, pr.remote_host,
              pr.uptime, pr.nvidia_smi_rc, pr.gpu_count, pr.gpu_type, pr.gpu_jobs, pr.gpu_power_w,
              pr.gpu_avg_temp_c, pr.bus_off_suspected, pr.bus_off_reason, pr.duration_ms
       FROM machines m
@@ -535,6 +537,7 @@ type ProbeRow = {
   status: ProbeResult["status"];
   ssh_ok: number;
   ssh_error: string;
+  ssh_user: string;
   remote_host: string;
   uptime: string;
   nvidia_smi_rc: number | null;
@@ -641,6 +644,7 @@ function rowToMachineWithLatest(row: LatestMachineRow, db: Sqlite): MachineWithL
       status: row.status!,
       ssh_ok: row.ssh_ok!,
       ssh_error: row.ssh_error ?? "",
+      ssh_user: row.ssh_user ?? "",
       remote_host: row.remote_host ?? "",
       uptime: row.uptime ?? "",
       nvidia_smi_rc: row.nvidia_smi_rc ?? null,
@@ -725,6 +729,7 @@ function rowToProbeResult(row: ProbeRow): ProbeResult {
     ip: "",
     sshOk: row.ssh_ok === 1,
     sshError: row.ssh_error,
+    sshUser: row.ssh_user,
     remoteHost: row.remote_host,
     uptime: row.uptime,
     nvidiaSmiRc: row.nvidia_smi_rc,

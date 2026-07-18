@@ -27,6 +27,7 @@ export type ParsedProbe = {
 
 export type RunProbeOptions = {
   user: string;
+  fallbackUser?: string;
   keyPath: string;
   connectTimeoutSeconds: number;
   probeTimeoutSeconds: number;
@@ -138,10 +139,28 @@ export function parseGpuMetrics(metricsOutput: string): GpuMetric[] {
 }
 
 export async function runProbe(machine: Machine, options: RunProbeOptions): Promise<ProbeResult> {
+  const primary = await runProbeAs(machine, options, options.user);
+  if (primary.status !== "ssh_failed") {
+    return primary;
+  }
+  const fallbackUser = options.fallbackUser?.trim();
+  if (!fallbackUser || fallbackUser === options.user || !isAuthFailure(primary.sshError)) {
+    return primary;
+  }
+  const fallback = await runProbeAs(machine, options, fallbackUser);
+  return fallback.status === "ssh_failed" ? primary : fallback;
+}
+
+/** Auth-shaped SSH failures are worth retrying as the fallback user; network failures are not. */
+export function isAuthFailure(sshError: string | undefined): boolean {
+  return /permission denied|authentication|publickey|no supported authentication methods/i.test(sshError ?? "");
+}
+
+async function runProbeAs(machine: Machine, options: RunProbeOptions, user: string): Promise<ProbeResult> {
   const start = Date.now();
   const sshHost = machine.sshHost ?? machine.ip;
   const sshPort = machine.sshPort ?? 22;
-  const sshTarget = `${options.user}@${sshHost}`;
+  const sshTarget = `${user}@${sshHost}`;
   const args = [
     "-i",
     options.keyPath,
@@ -199,6 +218,7 @@ export async function runProbe(machine: Machine, options: RunProbeOptions): Prom
     return {
       ...resultBase,
       sshOk: true,
+      sshUser: user,
       remoteHost: parsed.remoteHost,
       uptime: parsed.uptime,
       nvidiaSmiRc: parsed.nvidiaSmiRc,

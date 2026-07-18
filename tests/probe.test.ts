@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { buildRemoteScript, parseGpuProcesses, parseProbeOutput } from "../src/server/probe";
+import { buildRemoteScript, isAuthFailure, parseGpuProcesses, parseProbeOutput } from "../src/server/probe";
 
 describe("probe parsing", () => {
   it("parses probe scalars and blocks", () => {
@@ -89,6 +89,15 @@ describe("probe parsing", () => {
 
     expect(parsed.busOffSuspected).toBe(true);
     expect(parsed.gpuJobs).toBe("E");
+  });
+
+  it("classifies auth failures as retryable with the fallback user", () => {
+    expect(isAuthFailure("ezc@10.0.0.5: Permission denied (publickey).")).toBe(true);
+    expect(isAuthFailure("Authentication failed.")).toBe(true);
+    expect(isAuthFailure("ssh: connect to host 10.0.0.5 port 22: Network is unreachable")).toBe(false);
+    expect(isAuthFailure("ssh: connect to host 10.0.0.5 port 22: Connection refused")).toBe(false);
+    expect(isAuthFailure("probe timed out after 60s")).toBe(false);
+    expect(isAuthFailure(undefined)).toBe(false);
   });
 
   it("builds remote script with pmon and bounded ps enrichment", () => {

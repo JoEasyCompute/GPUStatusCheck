@@ -40,6 +40,7 @@ You can override:
 
 ```bash
 GPUCHECK_USER=ezc
+GPUCHECK_FALLBACK_USER=ubuntu
 GPUCHECK_KEY=~/.ssh/EZC-HydraHost
 GPUCHECK_TIMEOUT=10
 GPUCHECK_PROBE_TIMEOUT=60
@@ -87,6 +88,13 @@ Older two-column files with just `name,ip` still work.
 ```bash
 python3 gpu_status_check.py --machines machines.csv
 ```
+
+If SSH fails with an authentication error (e.g. `Permission denied`), both the
+CLI and the dashboard retry the probe once as `GPUCHECK_FALLBACK_USER`
+(default `ubuntu`) — useful for hosts provisioned with only the stock cloud
+user. Network failures are not retried. The user that succeeded is recorded
+with the probe result and used for the dashboard's copy-SSH-command shortcut.
+Set `GPUCHECK_FALLBACK_USER=` (empty) to disable.
 
 The script scans hosts in parallel. Use `--jobs N` or `GPUCHECK_JOBS=N` to tune
 concurrency; the default is 8. Progress is printed as hosts complete.

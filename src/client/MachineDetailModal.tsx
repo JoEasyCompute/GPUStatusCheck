@@ -63,6 +63,7 @@ function DetailPane({ machine, history, processes }: { machine: MachineWithLates
     <aside className="detail-panel">
       <dl className="metadata">
         <div><dt>Remote</dt><dd>{latest?.remoteHost || "-"}</dd></div>
+        <div><dt>SSH user</dt><dd>{latest?.sshUser || "-"}</dd></div>
         <div><dt>Uptime</dt><dd>{latest?.uptime || "-"}</dd></div>
         <div><dt>GPU type</dt><dd>{latest?.gpuType || "-"}</dd></div>
         <div><dt>GPU jobs</dt><dd className="mono">{latest?.gpuJobs || "-"}</dd></div>
