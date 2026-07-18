@@ -113,6 +113,10 @@ describe("api", () => {
     expect(badLimit.statusCode).toBe(200);
     expect(badLimit.json()).toHaveLength(1);
 
+    const windowed = await app.inject({ method: "GET", url: `/api/machines/${machine.id}/history?hours=24&limit=1000` });
+    expect(windowed.statusCode).toBe(200);
+    expect(windowed.json()).toHaveLength(1);
+
     const unknownApi = await app.inject({ method: "GET", url: "/api/nope" });
     expect(unknownApi.statusCode).toBe(404);
 

@@ -282,8 +282,10 @@ export function createDatabase(dbPath: string) {
     return listMachines().find((machine) => machine.id === id);
   }
 
-  function listHistory(machineId: number, limit = 200): ProbeResult[] {
-    const rows = db.prepare("SELECT * FROM probe_results WHERE machine_id = ? ORDER BY checked_at DESC LIMIT ?").all(machineId, limit) as ProbeRow[];
+  function listHistory(machineId: number, limit = 200, since?: string): ProbeResult[] {
+    const rows = since
+      ? db.prepare("SELECT * FROM probe_results WHERE machine_id = ? AND checked_at >= ? ORDER BY checked_at DESC LIMIT ?").all(machineId, since, limit) as ProbeRow[]
+      : db.prepare("SELECT * FROM probe_results WHERE machine_id = ? ORDER BY checked_at DESC LIMIT ?").all(machineId, limit) as ProbeRow[];
     return rows.map((row) => enrichProbeResult(db, rowToProbeResult(row)));
   }
 

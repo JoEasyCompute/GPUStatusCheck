@@ -60,9 +60,13 @@ export function buildApp(options: BuildAppOptions) {
     }
     return machine;
   });
-  app.get<{ Params: { id: string }; Querystring: { limit?: string } }>("/api/machines/:id/history", async (request) =>
-    options.db.listHistory(Number(request.params.id), parseLimit(request.query.limit, 200)),
-  );
+  app.get<{ Params: { id: string }; Querystring: { limit?: string; hours?: string } }>("/api/machines/:id/history", async (request) => {
+    const hours = Number(request.query.hours);
+    const since = Number.isFinite(hours) && hours > 0
+      ? new Date(Date.now() - Math.min(hours, 24 * 30) * 60 * 60 * 1000).toISOString()
+      : undefined;
+    return options.db.listHistory(Number(request.params.id), parseLimit(request.query.limit, 200), since);
+  });
   app.get<{ Params: { id: string }; Querystring: { limit?: string } }>("/api/machines/:id/processes", async (request) =>
     options.db.listProcesses(Number(request.params.id), parseLimit(request.query.limit, 200)),
   );

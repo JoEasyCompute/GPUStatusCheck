@@ -133,6 +133,10 @@ describe("database", () => {
     const staleIso = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
     backdate(oldRun, staleIso);
 
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    expect(db.listHistory(machine.id!, 200)).toHaveLength(2);
+    expect(db.listHistory(machine.id!, 200, since)).toHaveLength(1);
+
     expect(db.pruneHistory(30)).toBeGreaterThan(0);
     expect(db.listHistory(machine.id!)).toHaveLength(1);
     expect(db.listPollRuns()).toHaveLength(1);

@@ -161,7 +161,7 @@ export function App() {
     setHistory([]);
     setProcesses([]);
     Promise.all([
-      fetch(`/api/machines/${selectedMachineId}/history?limit=100`).then((response) => response.json()),
+      fetch(`/api/machines/${selectedMachineId}/history?hours=24&limit=1000`).then((response) => response.json()),
       fetch(`/api/machines/${selectedMachineId}/processes?limit=200`).then((response) => response.json()),
     ]).then(([nextHistory, nextProcesses]) => {
       if (cancelled) {
