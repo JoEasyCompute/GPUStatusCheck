@@ -346,6 +346,7 @@ export function App() {
           history={history}
           processes={processes}
           onToggleMaintenance={toggleMaintenance}
+          onCopySsh={copySshCommand}
           onClose={() => {
             setSelectedMachineId(undefined);
             setHistory([]);

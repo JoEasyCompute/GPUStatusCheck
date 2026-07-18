@@ -9,14 +9,22 @@ export function MachineDetailModal({
   processes,
   onClose,
   onToggleMaintenance,
+  onCopySsh,
 }: {
   machine: MachineWithLatest;
   history: ProbeResult[];
   processes: GpuProcess[];
   onClose: () => void;
   onToggleMaintenance: (machine: MachineWithLatest) => void;
+  onCopySsh: (machine: MachineWithLatest) => Promise<void> | void;
 }) {
+  const [copied, setCopied] = useState(false);
   const latest = history[0] ?? machine.latest;
+  const copySsh = async () => {
+    await onCopySsh(machine);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  };
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
       <div className="modal-panel" role="dialog" aria-modal="true" aria-label={`${machine.name} details`} onClick={(event) => event.stopPropagation()}>
@@ -24,7 +32,10 @@ export function MachineDetailModal({
           <h2>{machine.name}</h2>
           <span className={`status ${latest?.status ?? "unknown"}`}>{formatStatus(latest?.status)}</span>
           {machine.maintenance ? <span className="chip maintenance">maintenance</span> : null}
-          <span className="mono">{machine.ip}</span>
+          <button className="ip-copy" title="Copy SSH command" onClick={() => void copySsh()}>
+            {machine.ip}
+          </button>
+          {copied ? <span className="chip copied">copied</span> : null}
           <button className="maintenance-toggle" onClick={() => onToggleMaintenance(machine)}>
             {machine.maintenance ? "Exit maintenance" : "Enter maintenance"}
           </button>

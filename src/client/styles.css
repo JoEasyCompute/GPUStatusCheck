@@ -524,7 +524,7 @@ tbody tr.selected {
 
 .note-cell {
   color: var(--ink-2);
-  max-width: 260px;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -586,9 +586,8 @@ tbody tr.selected {
 .gpu-pills {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px;
-  min-width: 180px;
 }
 
 .gpu-pill {
@@ -880,6 +879,15 @@ dd {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
   margin-left: 6px;
+}
+
+.chip.copied {
+  background: color-mix(in srgb, var(--good) 14%, transparent);
+  color: var(--good-ink);
+}
+
+.modal-head .ip-copy {
+  font-size: 12.5px;
 }
 
 .maintenance-toggle {
