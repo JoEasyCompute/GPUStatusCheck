@@ -14,6 +14,7 @@ export type AppConfig = {
   skipLogs: boolean;
   processArgsMaxChars: number;
   pollOnStartup: boolean;
+  retentionDays: number;
   port: number;
 };
 
@@ -35,6 +36,7 @@ export function loadConfig(env = process.env): AppConfig {
     skipLogs: boolEnv(value("GPUCHECK_SKIP_LOGS"), false),
     processArgsMaxChars: numberEnv(value("GPUCHECK_PROCESS_ARGS_MAX_CHARS"), 512),
     pollOnStartup: !boolEnv(value("GPUCHECK_DISABLE_STARTUP_POLL"), false),
+    retentionDays: numberEnv(value("GPUCHECK_RETENTION_DAYS"), 30),
     port: numberEnv(value("PORT"), 4100),
   };
 }

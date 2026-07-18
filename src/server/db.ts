@@ -127,6 +127,9 @@ export function createDatabase(dbPath: string) {
       CREATE INDEX IF NOT EXISTS idx_gpu_metrics_probe ON gpu_metrics(probe_result_id);
       CREATE INDEX IF NOT EXISTS idx_gpu_down_events_active ON gpu_down_events(machine_id, gpu_index, recovered_at);
       CREATE INDEX IF NOT EXISTS idx_poll_runs_started ON poll_runs(started_at);
+      CREATE INDEX IF NOT EXISTS idx_probe_results_checked ON probe_results(checked_at);
+      CREATE INDEX IF NOT EXISTS idx_gpu_processes_checked ON gpu_processes(checked_at);
+      CREATE INDEX IF NOT EXISTS idx_gpu_metrics_checked ON gpu_metrics(checked_at);
     `);
     ensureColumn(db, "probe_results", "gpu_type", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_metrics", "pci_bus_id", "TEXT NOT NULL DEFAULT ''");
@@ -309,6 +312,27 @@ export function createDatabase(dbPath: string) {
     };
   }
 
+  function pruneHistory(retentionDays: number): number {
+    if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
+      return 0;
+    }
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+    const prune = db.transaction((cutoffIso: string): number => {
+      let deleted = 0;
+      // Each machine's most recent probe row survives regardless of age, so a
+      // long-unreachable machine keeps showing its last known state instead of
+      // reverting to "unknown".
+      const keepLatest = "SELECT MAX(id) FROM probe_results GROUP BY machine_id";
+      deleted += db.prepare(`DELETE FROM gpu_processes WHERE checked_at < ? AND probe_result_id NOT IN (${keepLatest})`).run(cutoffIso).changes;
+      deleted += db.prepare(`DELETE FROM gpu_metrics WHERE checked_at < ? AND probe_result_id NOT IN (${keepLatest})`).run(cutoffIso).changes;
+      deleted += db.prepare(`DELETE FROM probe_results WHERE checked_at < ? AND id NOT IN (${keepLatest})`).run(cutoffIso).changes;
+      deleted += db.prepare("DELETE FROM poll_runs WHERE started_at < ? AND id NOT IN (SELECT DISTINCT poll_run_id FROM probe_results)").run(cutoffIso).changes;
+      deleted += db.prepare("DELETE FROM gpu_down_events WHERE recovered_at IS NOT NULL AND recovered_at < ?").run(cutoffIso).changes;
+      return deleted;
+    });
+    return prune(cutoff);
+  }
+
   function close(): void {
     db.close();
   }
@@ -328,6 +352,7 @@ export function createDatabase(dbPath: string) {
     listMetrics,
     listPollRuns,
     getSummary,
+    pruneHistory,
     close,
   };
 }

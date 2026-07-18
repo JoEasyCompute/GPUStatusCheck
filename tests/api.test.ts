@@ -31,6 +31,7 @@ describe("api", () => {
         skipLogs: true,
         processArgsMaxChars: 512,
         pollOnStartup: false,
+        retentionDays: 30,
         port: 0,
         envPath,
       },
@@ -142,6 +143,7 @@ describe("api", () => {
         skipLogs: true,
         processArgsMaxChars: 512,
         pollOnStartup: false,
+        retentionDays: 30,
         port: 0,
       },
       probeMachine: async (machine): Promise<ProbeResult> => {

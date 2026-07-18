@@ -95,6 +95,59 @@ describe("database", () => {
     db.close();
   });
 
+  it("prunes history older than retention but keeps each machine's latest probe", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-prune-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+
+    const machine = db.upsertMachine({
+      name: "alpha",
+      ip: "10.0.0.1",
+      sshHost: "10.0.0.1",
+      sshPort: 22,
+    });
+    const probe = {
+      name: "alpha",
+      ip: "10.0.0.1",
+      sshOk: true,
+      status: "ok" as const,
+      gpuCount: 1,
+      gpuJobs: "D",
+      processes: [{ gpuIndex: 0, pid: 1, commandLine: "python train.py" }],
+      gpuMetrics: [{ gpuIndex: 0, powerW: 100 }],
+    };
+
+    const oldRun = db.createPollRun(1);
+    db.insertProbeResult(oldRun, machine.id!, probe);
+    db.finishPollRun(oldRun);
+    const newRun = db.createPollRun(1);
+    db.insertProbeResult(newRun, machine.id!, probe);
+    db.finishPollRun(newRun);
+
+    const backdate = (runId: number, iso: string) => {
+      db.raw.prepare("UPDATE probe_results SET checked_at = ? WHERE poll_run_id = ?").run(iso, runId);
+      db.raw.prepare("UPDATE gpu_processes SET checked_at = ? WHERE poll_run_id = ?").run(iso, runId);
+      db.raw.prepare("UPDATE gpu_metrics SET checked_at = ? WHERE poll_run_id = ?").run(iso, runId);
+      db.raw.prepare("UPDATE poll_runs SET started_at = ? WHERE id = ?").run(iso, runId);
+    };
+    const staleIso = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString();
+    backdate(oldRun, staleIso);
+
+    expect(db.pruneHistory(30)).toBeGreaterThan(0);
+    expect(db.listHistory(machine.id!)).toHaveLength(1);
+    expect(db.listPollRuns()).toHaveLength(1);
+    expect(db.pruneHistory(0)).toBe(0);
+
+    // Even when every probe is stale, the machine's latest row survives.
+    backdate(newRun, staleIso);
+    db.pruneHistory(30);
+    expect(db.listHistory(machine.id!)).toHaveLength(1);
+    expect(db.listMachines()[0]?.latest?.status).toBe("ok");
+    expect(db.listMachines()[0]?.latest?.gpuMetrics).toHaveLength(1);
+
+    db.close();
+  });
+
   it("tracks active GPU down notes until a successful recovery probe clears them", () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-db-notes-"));
     const db = createDatabase(join(dir, "test.sqlite"));

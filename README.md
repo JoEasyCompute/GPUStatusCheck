@@ -175,8 +175,14 @@ GPUCHECK_MACHINES=machines.csv
 GPUCHECK_DB=data/gpu-status.sqlite
 GPUCHECK_PROCESS_ARGS_MAX_CHARS=512
 GPUCHECK_DISABLE_STARTUP_POLL=0
+GPUCHECK_RETENTION_DAYS=30
 PORT=4100
 ```
+
+History older than `GPUCHECK_RETENTION_DAYS` (default 30) is pruned from the
+SQLite database after each poll so it does not grow without bound. Each
+machine's most recent probe result is always kept, even if it is older than
+the retention window. Set `GPUCHECK_RETENTION_DAYS=0` to keep history forever.
 
 The dashboard reads `.env` at startup, with shell environment variables taking
 precedence. The Config panel in the dashboard writes `GPUCHECK_MACHINES` and

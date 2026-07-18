@@ -108,6 +108,14 @@ export class PollScheduler {
         this.db.insertProbeResult(runId, machine.id!, result);
       });
       this.db.finishPollRun(runId);
+      try {
+        const pruned = this.db.pruneHistory(this.config.retentionDays);
+        if (pruned > 0) {
+          console.log(`pruned ${pruned} history rows older than ${this.config.retentionDays} days`);
+        }
+      } catch (error) {
+        console.error("history prune failed", error);
+      }
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
       if (runId > 0) {
