@@ -178,8 +178,15 @@ GPUCHECK_DB=data/gpu-status.sqlite
 GPUCHECK_PROCESS_ARGS_MAX_CHARS=512
 GPUCHECK_DISABLE_STARTUP_POLL=0
 GPUCHECK_RETENTION_DAYS=30
+GPUCHECK_HOST=127.0.0.1
 PORT=4100
 ```
+
+`GPUCHECK_HOST` controls the bind address (default `127.0.0.1`). Set
+`GPUCHECK_HOST=0.0.0.0` to expose the dashboard on all interfaces — note there
+is no authentication, and the dashboard can trigger SSH-backed polls and edit
+`.env`, so only do this on a trusted network (or keep it behind a VPN such as
+Tailscale or a reverse proxy with auth).
 
 History older than `GPUCHECK_RETENTION_DAYS` (default 30) is pruned from the
 SQLite database after each poll so it does not grow without bound. Each

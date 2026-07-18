@@ -35,6 +35,7 @@ describe("api", () => {
         telegramBotToken: "",
         telegramChatId: "",
         notifyRecovery: false,
+        host: "127.0.0.1",
         port: 0,
         envPath,
       },
@@ -150,6 +151,7 @@ describe("api", () => {
         telegramBotToken: "",
         telegramChatId: "",
         notifyRecovery: false,
+        host: "127.0.0.1",
         port: 0,
       },
       probeMachine: async (machine): Promise<ProbeResult> => {

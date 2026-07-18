@@ -77,6 +77,7 @@ describe("alerts", () => {
       telegramBotToken: "token",
       telegramChatId: "chat",
       notifyRecovery: false,
+      host: "127.0.0.1",
       port: 0,
     };
 

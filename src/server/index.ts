@@ -8,8 +8,8 @@ db.migrate();
 
 const app = buildApp({ db, config });
 
-app.listen({ host: "127.0.0.1", port: config.port }).then(() => {
-  console.log(`GPU dashboard listening on http://127.0.0.1:${config.port}`);
+app.listen({ host: config.host, port: config.port }).then(() => {
+  console.log(`GPU dashboard listening on http://${config.host}:${config.port}`);
   console.log(`Inventory: ${config.machinesPath}`);
   console.log(`Database: ${config.dbPath}`);
 }).catch((error) => {
