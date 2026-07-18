@@ -1,0 +1,13 @@
+*.csv
+!machines.sample.csv
+.env
+node_modules/
+dist/
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+report.json
+.omx/
+.omc/
+__pycache__/
