@@ -22,6 +22,7 @@ export class PollScheduler {
   private lastSkippedAt: string | undefined;
   private lastFinishedAt: string | undefined;
   private lastError = "";
+  private pendingPoll = false;
 
   constructor(
     private readonly db: DashboardDatabase,
@@ -54,6 +55,21 @@ export class PollScheduler {
     if (this.started) {
       this.schedule();
     }
+  }
+
+  /**
+   * Poll as soon as possible: immediately when idle, otherwise queued to run
+   * right after the in-flight poll finishes (so a config change never has to
+   * wait a full interval to take effect).
+   */
+  pollSoon(): void {
+    void this.pollOnce().then((result) => {
+      if (result.skipped) {
+        this.pendingPoll = true;
+      }
+    }).catch((error) => {
+      console.error("triggered poll failed", error);
+    });
   }
 
   getStatus(): PollStatus {
@@ -149,6 +165,15 @@ export class PollScheduler {
       fetch(this.config.heartbeatUrl).catch((error) => {
         console.error("heartbeat ping failed", error);
       });
+    }
+
+    if (this.pendingPoll) {
+      this.pendingPoll = false;
+      setTimeout(() => {
+        void this.pollOnce().catch((error) => {
+          console.error("queued poll failed", error);
+        });
+      }, 50);
     }
 
     return { runId, skipped: false };

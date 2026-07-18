@@ -238,7 +238,10 @@ stop.
 The dashboard reads `.env` at startup, with shell environment variables taking
 precedence. The Config panel in the dashboard writes `GPUCHECK_MACHINES` and
 `GPUCHECK_POLL_INTERVAL_SECONDS` back to `.env` and applies those two changes to
-the running scheduler immediately. Set `GPUCHECK_ENV_FILE=/path/to/.env` before
+the running scheduler immediately. Saving validates that the CSV exists and
+parses (rejecting the save otherwise) and triggers an immediate poll of the new
+inventory — if a poll is already running, the new inventory is polled right
+after it finishes. Set `GPUCHECK_ENV_FILE=/path/to/.env` before
 starting the API server to use a different environment file.
 
 The dashboard stores per-poll history in SQLite tables for machines, poll runs,

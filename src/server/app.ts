@@ -6,6 +6,7 @@ import type { EditableRuntimeConfig, RuntimeConfig } from "../shared/types";
 import type { AppConfig } from "./config";
 import { writeEnvSettings } from "./config";
 import type { DashboardDatabase } from "./db";
+import { readInventoryFromFile } from "./inventory";
 import { PollScheduler, type ProbeMachine } from "./scheduler";
 
 export type BuildAppOptions = {
@@ -60,12 +61,21 @@ export function buildApp(options: BuildAppOptions) {
     if (!Number.isInteger(pollIntervalSeconds) || pollIntervalSeconds < 1) {
       return reply.code(400).send({ error: "pollIntervalSeconds must be a positive integer" });
     }
+    try {
+      const machines = readInventoryFromFile(machinesPath);
+      if (machines.length === 0) {
+        return reply.code(400).send({ error: `no machines found in ${machinesPath}` });
+      }
+    } catch (error) {
+      return reply.code(400).send({ error: `cannot read machines file: ${error instanceof Error ? error.message : String(error)}` });
+    }
 
     writeEnvSettings(options.config.envPath, {
       GPUCHECK_MACHINES: machinesPath,
       GPUCHECK_POLL_INTERVAL_SECONDS: pollIntervalSeconds,
     });
     scheduler.updateConfig({ machinesPath, pollIntervalSeconds });
+    scheduler.pollSoon();
     return runtimeConfig();
   });
   app.get("/api/summary", async () => options.db.getSummary());

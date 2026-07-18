@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -73,29 +73,53 @@ describe("api", () => {
     });
     expect(config.body).not.toContain("keyPath");
 
+    const badSettings = await app.inject({
+      method: "PUT",
+      url: "/api/config",
+      payload: {
+        machinesPath: join(dir, "missing.csv"),
+        pollIntervalSeconds: 120,
+      },
+    });
+    expect(badSettings.statusCode).toBe(400);
+    expect(badSettings.json().error).toContain("cannot read machines file");
+    expect(readFileSync(envPath, "utf8")).toContain("GPUCHECK_MACHINES=old.csv");
+
+    const secondCsvPath = join(dir, "second.csv");
+    writeFileSync(secondCsvPath, "name,ip\nbeta,10.0.0.2\n");
     const settings = await app.inject({
       method: "PUT",
       url: "/api/config",
       payload: {
-        machinesPath: "iota.csv",
+        machinesPath: secondCsvPath,
         pollIntervalSeconds: 120,
       },
     });
     expect(settings.statusCode).toBe(200);
     expect(settings.json()).toMatchObject({
-      machinesPath: "iota.csv",
+      machinesPath: secondCsvPath,
       pollIntervalSeconds: 120,
       envPath,
     });
     const envText = readFileSync(envPath, "utf8");
-    expect(envText).toContain("GPUCHECK_MACHINES=iota.csv");
+    expect(envText).toContain(`GPUCHECK_MACHINES=${secondCsvPath}`);
     expect(envText).toContain("GPUCHECK_POLL_INTERVAL_SECONDS=120");
 
     const updatedConfig = await app.inject({ method: "GET", url: "/api/config" });
     expect(updatedConfig.json()).toMatchObject({
-      machinesPath: "iota.csv",
+      machinesPath: secondCsvPath,
       pollIntervalSeconds: 120,
     });
+
+    // Saving triggers an immediate poll of the new inventory; wait for it to
+    // finish so the assertions below run against the new machine list.
+    await vi.waitFor(async () => {
+      const machinesNow = await app.inject({ method: "GET", url: "/api/machines" });
+      const rows = machinesNow.json() as Array<{ name: string; latest?: { gpuJobs?: string } }>;
+      expect(rows.some((entry) => entry.name === "alpha")).toBe(false);
+      expect(rows.find((entry) => entry.name === "beta")?.latest?.gpuJobs).toBe("D");
+    });
+    expect(probeCalls).toBeGreaterThanOrEqual(2);
 
     const summary = await app.inject({ method: "GET", url: "/api/summary" });
     expect(summary.json()).toMatchObject({ total: 1, ok: 1, totalPowerW: 250.5 });
@@ -143,8 +167,8 @@ describe("api", () => {
 
     const fleet = await app.inject({ method: "GET", url: "/api/fleet-history?hours=24" });
     expect(fleet.statusCode).toBe(200);
-    expect(fleet.json()).toHaveLength(1);
-    expect(fleet.json()[0]).toMatchObject({ okCount: 1, totalPowerW: 250.5 });
+    expect(fleet.json().length).toBeGreaterThanOrEqual(2);
+    expect(fleet.json().at(-1)).toMatchObject({ okCount: 1, totalPowerW: 250.5 });
 
     await app.close();
     db.close();
