@@ -23,7 +23,9 @@ with a small persisted state file.
 
 - `machines.csv` — headered machine inventory rows
 - `machines.sample.csv` — commit-safe example inventory to copy from
-- `gpu_status_check.py` — the probe script
+- `gpu_status_check.py` — the CLI probe script
+- `scripts/remote-probe.sh` — the remote probe script, shared by the CLI and
+  the web dashboard (single source of truth for what runs on each host)
 - `.env.example` — sample configuration
 
 ## Configuration
@@ -183,6 +185,20 @@ History older than `GPUCHECK_RETENTION_DAYS` (default 30) is pruned from the
 SQLite database after each poll so it does not grow without bound. Each
 machine's most recent probe result is always kept, even if it is older than
 the retention window. Set `GPUCHECK_RETENTION_DAYS=0` to keep history forever.
+
+### Dashboard Telegram alerts
+
+When `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, the dashboard server
+sends the same transition alerts as the CLI after each scheduled poll: a
+message when a machine enters `degraded` or `ssh_failed`, deduplicated so an
+unchanged problem does not re-alert, and optional recovery notices with
+`GPUCHECK_NOTIFY_RECOVERY=1`. Dedup state lives in the SQLite database
+(`alert_states` table). If a Telegram send fails, the state is not advanced,
+so the alert retries on the next poll.
+
+If you run the dashboard continuously, you no longer need the Python watcher
+loop for alerting; the CLI remains useful for one-shot checks from a terminal
+or cron.
 
 The dashboard reads `.env` at startup, with shell environment variables taking
 precedence. The Config panel in the dashboard writes `GPUCHECK_MACHINES` and

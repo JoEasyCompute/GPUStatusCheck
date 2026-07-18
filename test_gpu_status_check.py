@@ -122,10 +122,9 @@ class GPUStatusCheckTests(unittest.TestCase):
         self.assertEqual(result.gpu_power_w, "512.4")
         self.assertEqual(result.gpu_avg_temp_c, "62.0")
         self.assertIn("nvidia-smi pmon -c 1", run.call_args.kwargs["input"])
-        self.assertIn(
-            "--query-gpu=power.draw,temperature.gpu",
-            run.call_args.kwargs["input"],
-        )
+        self.assertIn("--query-gpu=", run.call_args.kwargs["input"])
+        self.assertIn("power.draw", run.call_args.kwargs["input"])
+        self.assertIn("temperature.gpu", run.call_args.kwargs["input"])
         self.assertEqual(run.call_args.kwargs["timeout"], 45)
         self.assertEqual(cmd[-1], "1")
 

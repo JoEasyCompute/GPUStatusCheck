@@ -108,6 +108,12 @@ export function createDatabase(dbPath: string) {
         FOREIGN KEY(probe_result_id) REFERENCES probe_results(id)
       );
 
+      CREATE TABLE IF NOT EXISTS alert_states (
+        machine_name TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS gpu_down_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         machine_id INTEGER NOT NULL,
@@ -312,6 +318,23 @@ export function createDatabase(dbPath: string) {
     };
   }
 
+  function getAlertStates(): Record<string, string> {
+    const rows = db.prepare("SELECT machine_name, status FROM alert_states").all() as Array<{ machine_name: string; status: string }>;
+    return Object.fromEntries(rows.map((row) => [row.machine_name, row.status]));
+  }
+
+  function saveAlertStates(states: Record<string, string>): void {
+    const now = new Date().toISOString();
+    const replaceAll = db.transaction((entries: Array<[string, string]>) => {
+      db.prepare("DELETE FROM alert_states").run();
+      const insert = db.prepare("INSERT INTO alert_states (machine_name, status, updated_at) VALUES (?, ?, ?)");
+      for (const [name, status] of entries) {
+        insert.run(name, status, now);
+      }
+    });
+    replaceAll(Object.entries(states));
+  }
+
   function pruneHistory(retentionDays: number): number {
     if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
       return 0;
@@ -352,6 +375,8 @@ export function createDatabase(dbPath: string) {
     listMetrics,
     listPollRuns,
     getSummary,
+    getAlertStates,
+    saveAlertStates,
     pruneHistory,
     close,
   };

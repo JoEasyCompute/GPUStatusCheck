@@ -15,6 +15,9 @@ export type AppConfig = {
   processArgsMaxChars: number;
   pollOnStartup: boolean;
   retentionDays: number;
+  telegramBotToken: string;
+  telegramChatId: string;
+  notifyRecovery: boolean;
   port: number;
 };
 
@@ -37,6 +40,9 @@ export function loadConfig(env = process.env): AppConfig {
     processArgsMaxChars: numberEnv(value("GPUCHECK_PROCESS_ARGS_MAX_CHARS"), 512),
     pollOnStartup: !boolEnv(value("GPUCHECK_DISABLE_STARTUP_POLL"), false),
     retentionDays: numberEnv(value("GPUCHECK_RETENTION_DAYS"), 30),
+    telegramBotToken: value("TELEGRAM_BOT_TOKEN") || "",
+    telegramChatId: value("TELEGRAM_CHAT_ID") || "",
+    notifyRecovery: boolEnv(value("GPUCHECK_NOTIFY_RECOVERY"), false),
     port: numberEnv(value("PORT"), 4100),
   };
 }

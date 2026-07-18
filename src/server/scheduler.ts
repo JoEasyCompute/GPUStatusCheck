@@ -1,10 +1,12 @@
 import type { Machine, PollStatus, ProbeResult } from "../shared/types";
+import { buildAlerts, formatAlertMessage, sendTelegramMessage, splitMessage, type AlertInput } from "./alerts";
 import type { AppConfig } from "./config";
 import type { DashboardDatabase } from "./db";
 import { readInventoryFromFile } from "./inventory";
 import { runProbe } from "./probe";
 
 export type ProbeMachine = (machine: Machine) => Promise<ProbeResult>;
+export type SendAlertChunk = (chunk: string) => Promise<void>;
 
 export class PollScheduler {
   private running = false;
@@ -33,6 +35,8 @@ export class PollScheduler {
         checkLogs: !config.skipLogs,
         processArgsMaxChars: config.processArgsMaxChars,
       }),
+    private readonly sendAlertChunk: SendAlertChunk = (chunk) =>
+      sendTelegramMessage(config.telegramBotToken, config.telegramChatId, chunk),
   ) {}
 
   start(): void {
@@ -103,9 +107,16 @@ export class PollScheduler {
       this.db.markMissingInactive(machines.map((machine) => machine.name));
       runId = this.db.createPollRun(storedMachines.length);
       this.currentPoll.runId = runId;
+      const outcomes: AlertInput[] = [];
       await runConcurrent(storedMachines, Math.max(1, this.config.jobs), async (machine) => {
         const result = await this.probeMachine(machine);
         this.db.insertProbeResult(runId, machine.id!, result);
+        outcomes.push({
+          name: machine.name,
+          ip: machine.ip,
+          status: result.status,
+          reason: result.busOffReason || result.sshError || "",
+        });
       });
       this.db.finishPollRun(runId);
       try {
@@ -116,6 +127,7 @@ export class PollScheduler {
       } catch (error) {
         console.error("history prune failed", error);
       }
+      await this.deliverAlerts(outcomes);
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
       if (runId > 0) {
@@ -130,6 +142,36 @@ export class PollScheduler {
     }
 
     return { runId, skipped: false };
+  }
+
+  private async deliverAlerts(outcomes: AlertInput[]): Promise<void> {
+    try {
+      const previous = this.db.getAlertStates();
+      const { lines, nextStates } = buildAlerts(outcomes, previous, this.config.notifyRecovery);
+      const configured = Boolean(this.config.telegramBotToken && this.config.telegramChatId);
+
+      if (configured && lines.length > 0) {
+        const ok = outcomes.filter((outcome) => outcome.status === "ok").length;
+        const degraded = outcomes.filter((outcome) => outcome.status === "degraded").length;
+        const sshFailed = outcomes.filter((outcome) => outcome.status === "ssh_failed").length;
+        const message = formatAlertMessage(lines, ok, degraded, sshFailed);
+        try {
+          for (const chunk of splitMessage(message)) {
+            await this.sendAlertChunk(chunk);
+          }
+          console.log(`sent telegram alert (${lines.length} machines)`);
+        } catch (error) {
+          // Keep the previous alert state so the transition re-alerts on the
+          // next poll instead of being swallowed by a transient send failure.
+          console.error("telegram alert failed; will retry next poll", error);
+          return;
+        }
+      }
+
+      this.db.saveAlertStates(nextStates);
+    } catch (error) {
+      console.error("alert delivery failed", error);
+    }
   }
 }
 
