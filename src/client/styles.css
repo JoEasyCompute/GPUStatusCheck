@@ -801,18 +801,45 @@ dd {
   margin-top: 12px;
 }
 
+.chart-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  min-height: 26px;
+}
+
+.chart-hint {
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+
+.chart-reset {
+  font-size: 12px;
+  min-height: 26px;
+  padding: 0 10px;
+}
+
 .power-chart {
   border: 1px solid var(--hairline);
   border-radius: 8px;
   padding: 10px;
   position: relative;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .power-chart svg {
+  cursor: grab;
   display: block;
   height: auto;
   max-height: 260px;
+  touch-action: pan-y;
   width: 100%;
+}
+
+.power-chart.grabbing svg {
+  cursor: grabbing;
 }
 
 .chart-axis {

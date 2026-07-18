@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { ProbeResult } from "../shared/types";
 import { buildPowerChartSeries, type PowerChartPoint } from "./powerChartData";
+import { panTimeWindow, zoomTimeWindow, type TimeWindow } from "./timeWindow";
 
 /* Validated categorical palette slots, fixed order (see styles.css tokens). */
 const chartColors = [
@@ -18,13 +19,42 @@ type ChartLineData = { label: string; color: string; points: PowerChartPoint[] }
 
 export function PowerCharts({ history }: { history: ProbeResult[] }) {
   const series = buildPowerChartSeries(history);
+  const fullRange = series.timeRange;
+  const [view, setView] = useState<TimeWindow | undefined>();
+  const fullMin = fullRange?.min;
+  const fullMax = fullRange?.max;
+
+  const zoomAt = useCallback((anchorFraction: number, factor: number) => {
+    if (fullMin === undefined || fullMax === undefined) {
+      return;
+    }
+    setView((current) => zoomTimeWindow({ min: fullMin, max: fullMax }, current, anchorFraction, factor));
+  }, [fullMin, fullMax]);
+
+  const panBy = useCallback((deltaFraction: number) => {
+    if (fullMin === undefined || fullMax === undefined) {
+      return;
+    }
+    setView((current) => panTimeWindow({ min: fullMin, max: fullMax }, current, deltaFraction));
+  }, [fullMin, fullMax]);
+
+  const resetView = useCallback(() => setView(undefined), []);
+
   return (
     <div className="power-charts">
+      <div className="chart-toolbar">
+        <span className="chart-hint">Pinch or ⌃scroll to zoom · drag to pan · double-click to reset</span>
+        {view ? <button className="chart-reset" onClick={resetView}>Reset zoom</button> : null}
+      </div>
       <PowerLineChart
         ariaLabel="Total GPU power consumption over time"
         emptyText="No total GPU power history recorded."
         lines={[{ label: "Total", color: chartColors[0], points: series.total }]}
-        timeRange={series.timeRange}
+        view={view}
+        fullRange={fullRange}
+        onZoom={zoomAt}
+        onPan={panBy}
+        onReset={resetView}
       />
       <PowerLineChart
         ariaLabel="Per GPU power consumption over time"
@@ -34,7 +64,11 @@ export function PowerCharts({ history }: { history: ProbeResult[] }) {
           color: chartColors[index % chartColors.length],
           points: gpu.points,
         }))}
-        timeRange={series.timeRange}
+        view={view}
+        fullRange={fullRange}
+        onZoom={zoomAt}
+        onPan={panBy}
+        onReset={resetView}
       />
     </div>
   );
@@ -50,44 +84,152 @@ function PowerLineChart({
   ariaLabel,
   emptyText,
   lines,
-  timeRange,
+  view,
+  fullRange,
+  onZoom,
+  onPan,
+  onReset,
 }: {
   ariaLabel: string;
   emptyText: string;
   lines: ChartLineData[];
-  timeRange?: { min: number; max: number };
+  view?: TimeWindow;
+  fullRange?: TimeWindow;
+  onZoom: (anchorFraction: number, factor: number) => void;
+  onPan: (deltaFraction: number) => void;
+  onReset: () => void;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const gestureRef = useRef({ dragging: false, moved: false });
   const [hoverTime, setHoverTime] = useState<number | undefined>();
+  const [grabbing, setGrabbing] = useState(false);
+  const rawClipId = useId();
+  const clipId = `plot-clip-${rawClipId.replace(/[^a-zA-Z0-9-]/g, "")}`;
+
   const drawableLines = lines.filter((line) => line.points.length > 0);
-  const timestamps = [...new Set(drawableLines.flatMap((line) => line.points.map((point) => point.timestamp)))].sort((a, b) => a - b);
+  const allPoints = drawableLines.flatMap((line) => line.points);
+  const minTime = view?.min ?? fullRange?.min ?? (allPoints.length > 0 ? Math.min(...allPoints.map((point) => point.timestamp)) : 0);
+  const maxTime = view?.max ?? fullRange?.max ?? (allPoints.length > 0 ? Math.max(...allPoints.map((point) => point.timestamp)) : 0);
+
+  const visibleLines = drawableLines
+    .map((line) => ({ ...line, points: visibleSegment(line.points, minTime, maxTime) }))
+    .filter((line) => line.points.length > 0);
+  const inWindowPoints = visibleLines.flatMap((line) => line.points.filter((point) => point.timestamp >= minTime && point.timestamp <= maxTime));
+  const scalePoints = inWindowPoints.length > 0 ? inWindowPoints : visibleLines.flatMap((line) => line.points);
+  const maxWatts = Math.max(1, ...scalePoints.map((point) => point.value));
+  const timestamps = [...new Set(inWindowPoints.map((point) => point.timestamp))].sort((a, b) => a - b);
+
+  const toX = useCallback((timestamp: number) => {
+    if (minTime === maxTime) {
+      return pad.left + plotWidth / 2;
+    }
+    return pad.left + ((timestamp - minTime) / (maxTime - minTime)) * plotWidth;
+  }, [minTime, maxTime]);
+  const toY = (value: number) => pad.top + plotHeight - (value / maxWatts) * plotHeight;
+
+  const clientToFraction = useCallback((clientX: number): number => {
+    const svg = svgRef.current;
+    if (!svg) {
+      return 0.5;
+    }
+    const rect = svg.getBoundingClientRect();
+    const viewX = ((clientX - rect.left) / rect.width) * width;
+    return Math.min(1, Math.max(0, (viewX - pad.left) / plotWidth));
+  }, []);
+
+  const clientDxToFraction = useCallback((dxClient: number): number => {
+    const svg = svgRef.current;
+    if (!svg || svg.getBoundingClientRect().width === 0) {
+      return 0;
+    }
+    return (dxClient * (width / svg.getBoundingClientRect().width)) / plotWidth;
+  }, []);
+
+  // Native wheel listener: React's synthetic handler cannot reliably
+  // preventDefault, and macOS trackpad pinch arrives as ctrl+wheel.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) {
+      return;
+    }
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        onZoom(clientToFraction(event.clientX), Math.exp(event.deltaY * 0.005));
+        return;
+      }
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+        event.preventDefault();
+        onPan(clientDxToFraction(event.deltaX));
+      }
+    };
+    svg.addEventListener("wheel", onWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", onWheel);
+  }, [onZoom, onPan, clientToFraction, clientDxToFraction]);
 
   if (drawableLines.length === 0) {
     return <p className="empty-chart">{emptyText}</p>;
   }
 
-  const allPoints = drawableLines.flatMap((line) => line.points);
-  const minTime = timeRange?.min ?? Math.min(...allPoints.map((point) => point.timestamp));
-  const maxTime = timeRange?.max ?? Math.max(...allPoints.map((point) => point.timestamp));
-  const maxWatts = Math.max(1, ...allPoints.map((point) => point.value));
-  const toX = (timestamp: number) => {
-    if (minTime === maxTime) {
-      return pad.left + plotWidth / 2;
-    }
-    return pad.left + ((timestamp - minTime) / (maxTime - minTime)) * plotWidth;
+  const onPointerDown = (event: React.PointerEvent<SVGSVGElement>) => {
+    svgRef.current?.setPointerCapture(event.pointerId);
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    gestureRef.current = { dragging: true, moved: false };
+    setHoverTime(undefined);
+    setGrabbing(true);
   };
-  const toY = (value: number) => pad.top + plotHeight - (value / maxWatts) * plotHeight;
 
-  const onMouseMove = (event: React.MouseEvent<SVGSVGElement>) => {
-    const svg = svgRef.current;
-    if (!svg || timestamps.length === 0) {
+  const onPointerMove = (event: React.PointerEvent<SVGSVGElement>) => {
+    const pointers = pointersRef.current;
+    if (!pointers.has(event.pointerId)) {
+      if (event.pointerType === "mouse") {
+        updateHover(event.clientX);
+      }
       return;
     }
-    const rect = svg.getBoundingClientRect();
-    const viewX = ((event.clientX - rect.left) / rect.width) * width;
-    const cursorTime = minTime === maxTime
-      ? minTime
-      : minTime + ((viewX - pad.left) / plotWidth) * (maxTime - minTime);
+    const previous = pointers.get(event.pointerId)!;
+    const next = { x: event.clientX, y: event.clientY };
+    pointers.set(event.pointerId, next);
+
+    if (pointers.size === 1) {
+      const dx = next.x - previous.x;
+      if (dx !== 0) {
+        gestureRef.current.moved = true;
+        onPan(-clientDxToFraction(dx));
+      }
+      return;
+    }
+
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const previousOther = a === next ? b : a;
+      const previousDist = Math.max(12, Math.hypot(previous.x - previousOther.x, previous.y - previousOther.y));
+      const nextDist = Math.max(12, Math.hypot(next.x - previousOther.x, next.y - previousOther.y));
+      const midX = (next.x + previousOther.x) / 2;
+      gestureRef.current.moved = true;
+      onZoom(clientToFraction(midX), previousDist / nextDist);
+      const midDx = (next.x - previous.x) / 2;
+      if (midDx !== 0) {
+        onPan(-clientDxToFraction(midDx));
+      }
+    }
+  };
+
+  const onPointerEnd = (event: React.PointerEvent<SVGSVGElement>) => {
+    pointersRef.current.delete(event.pointerId);
+    if (pointersRef.current.size === 0) {
+      gestureRef.current.dragging = false;
+      setGrabbing(false);
+    }
+  };
+
+  const updateHover = (clientX: number) => {
+    if (gestureRef.current.dragging || timestamps.length === 0) {
+      return;
+    }
+    const fraction = clientToFraction(clientX);
+    const cursorTime = minTime === maxTime ? minTime : minTime + fraction * (maxTime - minTime);
     let nearest = timestamps[0];
     for (const timestamp of timestamps) {
       if (Math.abs(timestamp - cursorTime) < Math.abs(nearest - cursorTime)) {
@@ -98,22 +240,32 @@ function PowerLineChart({
   };
 
   const hoverX = hoverTime === undefined ? undefined : toX(hoverTime);
-  const hoverRows = hoverTime === undefined ? [] : drawableLines.flatMap((line) => {
+  const hoverRows = hoverTime === undefined ? [] : visibleLines.flatMap((line) => {
     const point = line.points.find((candidate) => candidate.timestamp === hoverTime);
     return point ? [{ label: line.label, color: line.color, point }] : [];
   });
   const tooltipOnLeft = hoverX !== undefined && hoverX > width * 0.62;
 
   return (
-    <div className="power-chart">
+    <div className={`power-chart ${grabbing ? "grabbing" : ""}`}>
       <svg
         ref={svgRef}
         viewBox={`0 0 ${width} ${height}`}
         role="img"
         aria-label={ariaLabel}
-        onMouseMove={onMouseMove}
+        onMouseMove={(event) => updateHover(event.clientX)}
         onMouseLeave={() => setHoverTime(undefined)}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerEnd}
+        onPointerCancel={onPointerEnd}
+        onDoubleClick={onReset}
       >
+        <defs>
+          <clipPath id={clipId}>
+            <rect x={pad.left} y={pad.top} width={plotWidth} height={plotHeight} />
+          </clipPath>
+        </defs>
         <line className="chart-axis" x1={pad.left} y1={pad.top} x2={pad.left} y2={pad.top + plotHeight} />
         <line className="chart-axis" x1={pad.left} y1={pad.top + plotHeight} x2={pad.left + plotWidth} y2={pad.top + plotHeight} />
         {[0.25, 0.5, 0.75, 1].map((fraction) => {
@@ -128,31 +280,32 @@ function PowerLineChart({
         <text className="chart-label" x={pad.left - 8} y={pad.top + plotHeight + 4} textAnchor="end">0</text>
         <text className="chart-label" x={pad.left} y={height - 10}>{new Date(minTime).toLocaleTimeString()}</text>
         <text className="chart-label" x={pad.left + plotWidth} y={height - 10} textAnchor="end">{new Date(maxTime).toLocaleTimeString()}</text>
-        {drawableLines.map((line) => (
-          <g key={line.label}>
+        <g clipPath={`url(#${clipId})`}>
+          {visibleLines.map((line) => (
             <path
+              key={line.label}
               className="chart-line"
               d={toPath(line.points, toX, toY)}
               fill="none"
               style={{ stroke: line.color }}
             />
-          </g>
-        ))}
-        {hoverX !== undefined ? (
-          <g>
-            <line className="chart-crosshair" x1={hoverX} y1={pad.top} x2={hoverX} y2={pad.top + plotHeight} />
-            {hoverRows.map((row) => (
-              <circle
-                key={row.label}
-                className="chart-hover-dot"
-                cx={toX(row.point.timestamp)}
-                cy={toY(row.point.value)}
-                r={4}
-                style={{ fill: row.color }}
-              />
-            ))}
-          </g>
-        ) : null}
+          ))}
+          {hoverX !== undefined ? (
+            <g>
+              <line className="chart-crosshair" x1={hoverX} y1={pad.top} x2={hoverX} y2={pad.top + plotHeight} />
+              {hoverRows.map((row) => (
+                <circle
+                  key={row.label}
+                  className="chart-hover-dot"
+                  cx={toX(row.point.timestamp)}
+                  cy={toY(row.point.value)}
+                  r={4}
+                  style={{ fill: row.color }}
+                />
+              ))}
+            </g>
+          ) : null}
+        </g>
       </svg>
       {hoverTime !== undefined && hoverRows.length > 0 ? (
         <div
@@ -172,9 +325,9 @@ function PowerLineChart({
           ))}
         </div>
       ) : null}
-      {drawableLines.length > 1 ? (
+      {visibleLines.length > 1 ? (
         <div className="chart-legend">
-          {drawableLines.map((line) => (
+          {visibleLines.map((line) => (
             <span key={line.label}>
               <i style={{ backgroundColor: line.color }} />
               {line.label}
@@ -184,6 +337,18 @@ function PowerLineChart({
       ) : null}
     </div>
   );
+}
+
+/** Points inside [min, max] plus one neighbor on each side for line continuity. */
+function visibleSegment(points: PowerChartPoint[], min: number, max: number): PowerChartPoint[] {
+  if (points.length === 0) {
+    return points;
+  }
+  const firstInside = points.findIndex((point) => point.timestamp >= min);
+  const firstBeyond = points.findIndex((point) => point.timestamp > max);
+  const start = Math.max(0, (firstInside === -1 ? points.length : firstInside) - 1);
+  const end = Math.min(points.length, (firstBeyond === -1 ? points.length : firstBeyond) + 1);
+  return points.slice(start, end);
 }
 
 function formatWattValue(value: number): string {
