@@ -30,7 +30,25 @@ export function buildApp(options: BuildAppOptions) {
     port: options.config.port,
   });
 
-  app.get("/api/health", async () => ({ ok: true }));
+  const startedAt = Date.now();
+  app.get("/api/health", async (_request, reply) => {
+    const status = scheduler.getStatus();
+    const lastPollAt = status.lastFinishedAt ? Date.parse(status.lastFinishedAt) : startedAt;
+    const secondsSinceLastPoll = Math.floor((Date.now() - lastPollAt) / 1000);
+    const staleAfterSeconds = Math.max(900, status.pollIntervalSeconds * 3);
+    const ok = secondsSinceLastPoll <= staleAfterSeconds;
+    if (!ok) {
+      reply.code(503);
+    }
+    return {
+      ok,
+      polling: status.running,
+      lastPollFinishedAt: status.lastFinishedAt ?? null,
+      secondsSinceLastPoll,
+      staleAfterSeconds,
+      lastError: status.lastError,
+    };
+  });
   app.get("/api/config", async (): Promise<RuntimeConfig> => runtimeConfig());
   app.put<{ Body: Partial<EditableRuntimeConfig> }>("/api/config", async (request, reply) => {
     const machinesPath = String(request.body?.machinesPath ?? "").trim();
@@ -70,6 +88,29 @@ export function buildApp(options: BuildAppOptions) {
   app.get<{ Params: { id: string }; Querystring: { limit?: string } }>("/api/machines/:id/processes", async (request) =>
     options.db.listProcesses(Number(request.params.id), parseLimit(request.query.limit, 200)),
   );
+  app.patch<{ Params: { id: string }; Body: { maintenance?: boolean; expectedGpuCount?: number | null } }>("/api/machines/:id", async (request, reply) => {
+    const machineId = Number(request.params.id);
+    if (!options.db.getMachine(machineId)) {
+      return reply.code(404).send({ error: "machine not found" });
+    }
+    if (typeof request.body?.maintenance === "boolean") {
+      options.db.setMachineMaintenance(machineId, request.body.maintenance);
+    }
+    if ("expectedGpuCount" in (request.body ?? {})) {
+      const expected = request.body.expectedGpuCount;
+      if (expected !== null && (!Number.isInteger(expected) || expected! < 0)) {
+        return reply.code(400).send({ error: "expectedGpuCount must be a non-negative integer or null" });
+      }
+      options.db.setExpectedGpuCount(machineId, expected ?? null);
+    }
+    return options.db.getMachine(machineId);
+  });
+  app.get<{ Querystring: { hours?: string } }>("/api/fleet-history", async (request) => {
+    const hours = Number(request.query.hours);
+    const windowHours = Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 30) : 24;
+    const since = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
+    return options.db.listFleetHistory(since);
+  });
   app.get<{ Querystring: { limit?: string } }>("/api/poll-runs", async (request) =>
     options.db.listPollRuns(parseLimit(request.query.limit, 50)),
   );

@@ -47,7 +47,10 @@ export function MachineTable({
           {sortedMachines.map((machine) => (
             <tr key={machine.id} className={machine.id === selectedMachineId ? "selected" : ""} onClick={() => onSelect(machine.id!)}>
               <td className="name-cell">{machine.name}</td>
-              <td><span className={`status ${machine.latest?.status ?? "unknown"}`}>{formatStatus(machine.latest?.status)}</span></td>
+              <td>
+                <span className={`status ${machine.latest?.status ?? "unknown"}`}>{formatStatus(machine.latest?.status)}</span>
+                {machine.maintenance ? <span className="chip maintenance" title="Alerts muted while in maintenance">M</span> : null}
+              </td>
               <td>
                 <button
                   className="ip-copy"

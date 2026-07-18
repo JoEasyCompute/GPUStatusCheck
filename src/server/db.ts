@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import type { GpuDownNote, GpuMetric, GpuProcess, Machine, MachineWithLatest, PollRun, ProbeResult, Summary } from "../shared/types";
+import type { FleetHistoryPoint, GpuDownNote, GpuMetric, GpuProcess, Machine, MachineWithLatest, PollRun, ProbeResult, Summary } from "../shared/types";
 
 type Sqlite = Database.Database;
 
@@ -136,7 +136,10 @@ export function createDatabase(dbPath: string) {
       CREATE INDEX IF NOT EXISTS idx_probe_results_checked ON probe_results(checked_at);
       CREATE INDEX IF NOT EXISTS idx_gpu_processes_checked ON gpu_processes(checked_at);
       CREATE INDEX IF NOT EXISTS idx_gpu_metrics_checked ON gpu_metrics(checked_at);
+      CREATE INDEX IF NOT EXISTS idx_probe_results_run ON probe_results(poll_run_id);
     `);
+    ensureColumn(db, "machines", "maintenance", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn(db, "machines", "expected_gpu_count", "INTEGER");
     ensureColumn(db, "probe_results", "gpu_type", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_metrics", "pci_bus_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_metrics", "power_limit_w", "REAL");
@@ -320,6 +323,52 @@ export function createDatabase(dbPath: string) {
     };
   }
 
+  function setMachineMaintenance(machineId: number, maintenance: boolean): Machine | undefined {
+    db.prepare("UPDATE machines SET maintenance = ?, updated_at = ? WHERE id = ?").run(maintenance ? 1 : 0, new Date().toISOString(), machineId);
+    const row = db.prepare("SELECT * FROM machines WHERE id = ?").get(machineId) as MachineRow | undefined;
+    return row ? rowToMachine(row) : undefined;
+  }
+
+  function setExpectedGpuCount(machineId: number, expected: number | null): void {
+    db.prepare("UPDATE machines SET expected_gpu_count = ?, updated_at = ? WHERE id = ?").run(expected, new Date().toISOString(), machineId);
+  }
+
+  function raiseExpectedGpuCount(machineId: number, gpuCount: number): void {
+    db.prepare(`
+      UPDATE machines SET expected_gpu_count = ?, updated_at = ?
+      WHERE id = ? AND (expected_gpu_count IS NULL OR expected_gpu_count < ?)
+    `).run(gpuCount, new Date().toISOString(), machineId, gpuCount);
+  }
+
+  function listFleetHistory(since: string, limit = 2000): FleetHistoryPoint[] {
+    const rows = db.prepare(`
+      SELECT p.id, p.started_at, p.ok_count, p.degraded_count, p.ssh_failed_count,
+             (SELECT SUM(r.gpu_power_w) FROM probe_results r WHERE r.poll_run_id = p.id) AS total_power_w,
+             (SELECT AVG(r.gpu_avg_temp_c) FROM probe_results r WHERE r.poll_run_id = p.id) AS avg_temp_c
+      FROM poll_runs p
+      WHERE p.status = 'complete' AND p.started_at >= ?
+      ORDER BY p.started_at ASC
+      LIMIT ?
+    `).all(since, limit) as Array<{
+      id: number;
+      started_at: string;
+      ok_count: number;
+      degraded_count: number;
+      ssh_failed_count: number;
+      total_power_w: number | null;
+      avg_temp_c: number | null;
+    }>;
+    return rows.map((row) => ({
+      pollRunId: row.id,
+      startedAt: row.started_at,
+      okCount: row.ok_count,
+      degradedCount: row.degraded_count,
+      sshFailedCount: row.ssh_failed_count,
+      totalPowerW: row.total_power_w === null ? null : Number(row.total_power_w.toFixed(1)),
+      averageTempC: row.avg_temp_c === null ? null : Number(row.avg_temp_c.toFixed(1)),
+    }));
+  }
+
   function getAlertStates(): Record<string, string> {
     const rows = db.prepare("SELECT machine_name, status FROM alert_states").all() as Array<{ machine_name: string; status: string }>;
     return Object.fromEntries(rows.map((row) => [row.machine_name, row.status]));
@@ -379,6 +428,10 @@ export function createDatabase(dbPath: string) {
     getSummary,
     getAlertStates,
     saveAlertStates,
+    setMachineMaintenance,
+    setExpectedGpuCount,
+    raiseExpectedGpuCount,
+    listFleetHistory,
     pruneHistory,
     close,
   };
@@ -466,6 +519,8 @@ type MachineRow = {
   owner: string;
   commission_date: string;
   active: number;
+  maintenance: number;
+  expected_gpu_count: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -567,6 +622,8 @@ function rowToMachine(row: MachineRow): Machine {
     owner: row.owner,
     commissionDate: row.commission_date,
     active: row.active === 1,
+    maintenance: row.maintenance === 1,
+    expectedGpuCount: row.expected_gpu_count,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

@@ -1,18 +1,20 @@
 import { useState } from "react";
 import type { GpuProcess, MachineWithLatest, ProbeResult } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
-import { PowerCharts } from "./PowerCharts";
+import { GpuCharts } from "./PowerCharts";
 
 export function MachineDetailModal({
   machine,
   history,
   processes,
   onClose,
+  onToggleMaintenance,
 }: {
   machine: MachineWithLatest;
   history: ProbeResult[];
   processes: GpuProcess[];
   onClose: () => void;
+  onToggleMaintenance: (machine: MachineWithLatest) => void;
 }) {
   const latest = history[0] ?? machine.latest;
   return (
@@ -21,7 +23,11 @@ export function MachineDetailModal({
         <div className="modal-head">
           <h2>{machine.name}</h2>
           <span className={`status ${latest?.status ?? "unknown"}`}>{formatStatus(latest?.status)}</span>
+          {machine.maintenance ? <span className="chip maintenance">maintenance</span> : null}
           <span className="mono">{machine.ip}</span>
+          <button className="maintenance-toggle" onClick={() => onToggleMaintenance(machine)}>
+            {machine.maintenance ? "Exit maintenance" : "Enter maintenance"}
+          </button>
           <button className="modal-close" onClick={onClose} aria-label="Close">
             ✕
           </button>
@@ -67,8 +73,8 @@ function DetailPane({ machine, history, processes }: { machine: MachineWithLates
       {latest?.kernelHits ? <pre className="evidence-block">{latest.kernelHits}</pre> : null}
 
       <details className="detail-section" open>
-        <summary>GPU power history</summary>
-        <PowerCharts history={history} />
+        <summary>GPU history</summary>
+        <GpuCharts history={history} />
       </details>
 
       <details className="detail-section">

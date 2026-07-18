@@ -207,6 +207,34 @@ If you run the dashboard continuously, you no longer need the Python watcher
 loop for alerting; the CLI remains useful for one-shot checks from a terminal
 or cron.
 
+The dashboard also tracks each machine's expected GPU count (the highest a
+healthy probe has ever reported). If a later healthy probe sees fewer GPUs, the
+machine is marked degraded with "only N/M GPUs visible" and alerts — catching
+GPUs that fall off the bus without leaving kernel-log evidence. If a machine is
+legitimately downsized, reset the learned count:
+
+```bash
+curl -X PATCH -H 'Content-Type: application/json' \
+  -d '{"expectedGpuCount": null}' http://127.0.0.1:4100/api/machines/<id>
+```
+
+### Maintenance mode
+
+The machine detail modal has an Enter/Exit maintenance button (also via
+`PATCH /api/machines/<id>` with `{"maintenance": true}`). Machines in
+maintenance show an "M" chip in the table and stop sending alerts; their status
+is still tracked silently, so leaving maintenance does not fire stale alerts —
+only new transitions after that point alert.
+
+### Monitor watchdog
+
+`GET /api/health` reports `secondsSinceLastPoll` and returns HTTP 503 when no
+poll has completed for 3x the poll interval (minimum 15 minutes), so an
+external checker can detect a wedged monitor. Optionally set
+`GPUCHECK_HEARTBEAT_URL` (e.g. a healthchecks.io ping URL); the server GETs it
+after every successful poll, and the watchdog service alerts you if the pings
+stop.
+
 The dashboard reads `.env` at startup, with shell environment variables taking
 precedence. The Config panel in the dashboard writes `GPUCHECK_MACHINES` and
 `GPUCHECK_POLL_INTERVAL_SECONDS` back to `.env` and applies those two changes to

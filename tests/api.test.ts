@@ -35,6 +35,7 @@ describe("api", () => {
         telegramBotToken: "",
         telegramChatId: "",
         notifyRecovery: false,
+        heartbeatUrl: "",
         host: "127.0.0.1",
         port: 0,
         envPath,
@@ -120,6 +121,31 @@ describe("api", () => {
     const unknownApi = await app.inject({ method: "GET", url: "/api/nope" });
     expect(unknownApi.statusCode).toBe(404);
 
+    const health = await app.inject({ method: "GET", url: "/api/health" });
+    expect(health.statusCode).toBe(200);
+    expect(health.json()).toMatchObject({ ok: true });
+    expect(health.json().secondsSinceLastPoll).toBeGreaterThanOrEqual(0);
+
+    const maintenanceOn = await app.inject({
+      method: "PATCH",
+      url: `/api/machines/${machine.id}`,
+      payload: { maintenance: true },
+    });
+    expect(maintenanceOn.statusCode).toBe(200);
+    expect(maintenanceOn.json().maintenance).toBe(true);
+
+    const badExpected = await app.inject({
+      method: "PATCH",
+      url: `/api/machines/${machine.id}`,
+      payload: { expectedGpuCount: -3 },
+    });
+    expect(badExpected.statusCode).toBe(400);
+
+    const fleet = await app.inject({ method: "GET", url: "/api/fleet-history?hours=24" });
+    expect(fleet.statusCode).toBe(200);
+    expect(fleet.json()).toHaveLength(1);
+    expect(fleet.json()[0]).toMatchObject({ okCount: 1, totalPowerW: 250.5 });
+
     await app.close();
     db.close();
   });
@@ -155,6 +181,7 @@ describe("api", () => {
         telegramBotToken: "",
         telegramChatId: "",
         notifyRecovery: false,
+        heartbeatUrl: "",
         host: "127.0.0.1",
         port: 0,
       },

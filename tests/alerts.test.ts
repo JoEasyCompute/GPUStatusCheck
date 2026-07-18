@@ -53,6 +53,26 @@ describe("alerts", () => {
     expect(hardSplit.join("").replace(/\n/g, "")).toBe(`short${oneGiantLine}`);
   });
 
+  it("mutes alerts for machines in maintenance while still tracking state", () => {
+    const results = [
+      { name: "alpha", ip: "10.0.0.1", status: "degraded", reason: "kernel/log indicators", muted: true },
+      { name: "beta", ip: "10.0.0.2", status: "degraded", reason: "kernel/log indicators" },
+    ];
+
+    const built = buildAlerts(results, {}, true);
+    expect(built.lines).toHaveLength(1);
+    expect(built.lines[0]).toContain("beta");
+    expect(built.nextStates).toEqual({ alpha: "degraded", beta: "degraded" });
+
+    // Exiting maintenance with the same status does not fire a stale alert.
+    const afterMaintenance = buildAlerts(
+      results.map((result) => ({ ...result, muted: false })),
+      built.nextStates,
+      true,
+    );
+    expect(afterMaintenance.lines).toEqual([]);
+  });
+
   it("sends transition alerts from the scheduler and retries after delivery failure", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-alerts-"));
     const csvPath = join(dir, "machines.csv");
@@ -77,6 +97,7 @@ describe("alerts", () => {
       telegramBotToken: "token",
       telegramChatId: "chat",
       notifyRecovery: false,
+      heartbeatUrl: "",
       host: "127.0.0.1",
       port: 0,
     };
@@ -124,6 +145,73 @@ describe("alerts", () => {
     await scheduler.pollOnce();
     expect(sent).toHaveLength(1);
     expect(db.getAlertStates()).toEqual({ alpha: "ok" });
+
+    db.close();
+  });
+
+  it("degrades and alerts when a healthy machine loses a GPU", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-count-"));
+    const csvPath = join(dir, "machines.csv");
+    writeFileSync(csvPath, "name,ip\nalpha,10.0.0.1\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+
+    const config: AppConfig = {
+      machinesPath: csvPath,
+      dbPath: join(dir, "db.sqlite"),
+      envPath: join(dir, ".env"),
+      user: "ezc",
+      keyPath: "~/.ssh/test",
+      connectTimeoutSeconds: 10,
+      probeTimeoutSeconds: 60,
+      jobs: 1,
+      pollIntervalSeconds: 300,
+      skipLogs: true,
+      processArgsMaxChars: 512,
+      pollOnStartup: false,
+      retentionDays: 30,
+      telegramBotToken: "token",
+      telegramChatId: "chat",
+      notifyRecovery: false,
+      heartbeatUrl: "",
+      host: "127.0.0.1",
+      port: 0,
+    };
+
+    let gpuCount = 8;
+    const sent: string[] = [];
+    const scheduler = new PollScheduler(
+      db,
+      config,
+      async (machine): Promise<ProbeResult> => ({
+        name: machine.name,
+        ip: machine.ip,
+        sshOk: true,
+        status: "ok",
+        gpuCount,
+        gpuJobs: "D".repeat(gpuCount),
+      }),
+      async (chunk) => {
+        sent.push(chunk);
+      },
+    );
+
+    // First poll learns the expected count of 8.
+    await scheduler.pollOnce();
+    expect(sent).toHaveLength(0);
+    expect(db.listMachines()[0]?.expectedGpuCount).toBe(8);
+
+    // A GPU falls off the bus silently: nvidia-smi now reports 7.
+    gpuCount = 7;
+    await scheduler.pollOnce();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("DEGRADED: only 7/8 GPUs visible");
+    expect(db.listMachines()[0]?.latest?.status).toBe("degraded");
+
+    // Still 7 next poll: no repeat alert, expected count unchanged.
+    await scheduler.pollOnce();
+    expect(sent).toHaveLength(1);
+    expect(db.listMachines()[0]?.expectedGpuCount).toBe(8);
 
     db.close();
   });

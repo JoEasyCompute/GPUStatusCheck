@@ -8,8 +8,20 @@ export type Machine = {
   owner?: string;
   commissionDate?: string;
   active?: boolean;
+  maintenance?: boolean;
+  expectedGpuCount?: number | null;
   createdAt?: string;
   updatedAt?: string;
+};
+
+export type FleetHistoryPoint = {
+  pollRunId: number;
+  startedAt: string;
+  okCount: number;
+  degradedCount: number;
+  sshFailedCount: number;
+  totalPowerW: number | null;
+  averageTempC: number | null;
 };
 
 export type GpuProcess = {

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { buildSshCommand } from "../shared/ssh";
 import type { EditableRuntimeConfig, GpuProcess, MachineWithLatest, PollStatus, ProbeResult, RuntimeConfig, Summary } from "../shared/types";
 import { copyText } from "./clipboard";
+import { FleetCharts } from "./FleetCharts";
 import { MachineDetailModal } from "./MachineDetailModal";
 import { MachineTable } from "./MachineTable";
 import { formatElapsed, formatTime } from "./formatters";
@@ -116,6 +117,23 @@ export function App() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSavingSettings(false);
+    }
+  }
+
+  async function toggleMaintenance(machine: MachineWithLatest) {
+    try {
+      const response = await fetch(`/api/machines/${machine.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maintenance: !machine.maintenance }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(body.error || response.statusText);
+      }
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -305,6 +323,8 @@ export function App() {
         </div>
       </section>
 
+      <FleetCharts />
+
       <section className="toolbar">
         <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, IP, platform, owner" />
         <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
@@ -325,6 +345,7 @@ export function App() {
           machine={selectedMachine}
           history={history}
           processes={processes}
+          onToggleMaintenance={toggleMaintenance}
           onClose={() => {
             setSelectedMachineId(undefined);
             setHistory([]);

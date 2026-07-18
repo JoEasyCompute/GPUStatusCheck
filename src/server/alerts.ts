@@ -3,6 +3,8 @@ export type AlertInput = {
   ip: string;
   status: string;
   reason: string;
+  /** Muted (maintenance) machines have state tracked but never emit lines. */
+  muted?: boolean;
 };
 
 export type BuiltAlerts = {
@@ -23,6 +25,10 @@ export function buildAlerts(
   for (const result of results) {
     nextStates[result.name] = result.status;
     const previousStatus = previous[result.name];
+
+    if (result.muted) {
+      continue;
+    }
 
     if (result.status === "ok") {
       if (notifyRecovery && previousStatus && PROBLEM_STATUSES.has(previousStatus)) {

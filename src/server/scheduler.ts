@@ -110,12 +110,14 @@ export class PollScheduler {
       const outcomes: AlertInput[] = [];
       await runConcurrent(storedMachines, Math.max(1, this.config.jobs), async (machine) => {
         const result = await this.probeMachine(machine);
+        this.applyExpectedGpuCount(machine, result);
         this.db.insertProbeResult(runId, machine.id!, result);
         outcomes.push({
           name: machine.name,
           ip: machine.ip,
           status: result.status,
           reason: result.busOffReason || result.sshError || "",
+          muted: machine.maintenance === true,
         });
       });
       this.db.finishPollRun(runId);
@@ -141,7 +143,38 @@ export class PollScheduler {
       this.lastFinishedAt = new Date().toISOString();
     }
 
+    if (!this.lastError && this.config.heartbeatUrl) {
+      // Dead-man's-switch ping: if these stop arriving, the watchdog service
+      // alerts that the monitor itself is down.
+      fetch(this.config.heartbeatUrl).catch((error) => {
+        console.error("heartbeat ping failed", error);
+      });
+    }
+
     return { runId, skipped: false };
+  }
+
+  /**
+   * A machine's expected GPU count is the highest count a healthy probe has
+   * ever reported. A later healthy probe seeing fewer GPUs means one fell off
+   * the bus without leaving kernel-log evidence, so degrade the result to
+   * make the transition alert fire.
+   */
+  private applyExpectedGpuCount(machine: Machine, result: ProbeResult): void {
+    if (!result.sshOk || result.gpuCount === null || result.gpuCount === undefined) {
+      return;
+    }
+    const expected = machine.expectedGpuCount ?? 0;
+    if (result.gpuCount > expected) {
+      this.db.raiseExpectedGpuCount(machine.id!, result.gpuCount);
+      return;
+    }
+    if (result.status === "ok" && result.gpuCount < expected) {
+      result.status = "degraded";
+      result.busOffReason = [result.busOffReason, `only ${result.gpuCount}/${expected} GPUs visible`]
+        .filter(Boolean)
+        .join("; ");
+    }
   }
 
   private async deliverAlerts(outcomes: AlertInput[]): Promise<void> {

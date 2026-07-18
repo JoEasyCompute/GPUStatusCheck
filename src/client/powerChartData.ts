@@ -1,4 +1,4 @@
-import type { ProbeResult } from "../shared/types";
+import type { GpuMetric, ProbeResult } from "../shared/types";
 
 export type PowerChartPoint = {
   timestamp: number;
@@ -61,6 +61,50 @@ export function buildPowerChartSeries(history: ProbeResult[]): PowerChartSeries 
       .sort(([a], [b]) => a - b)
       .map(([gpuIndex, points]) => ({ gpuIndex, points })),
     maxWatts,
+    timeRange: Number.isFinite(minTime) && Number.isFinite(maxTime) ? { min: minTime, max: maxTime } : undefined,
+  };
+}
+
+export type GpuMetricSeries = {
+  perGpu: GpuPowerSeries[];
+  timeRange?: {
+    min: number;
+    max: number;
+  };
+};
+
+export function buildGpuMetricSeries(
+  history: ProbeResult[],
+  pick: (metric: GpuMetric) => number | null | undefined,
+): GpuMetricSeries {
+  const gpuPoints = new Map<number, PowerChartPoint[]>();
+  let minTime = Number.POSITIVE_INFINITY;
+  let maxTime = Number.NEGATIVE_INFINITY;
+
+  const chronologicalHistory = [...history].sort((a, b) => parseTime(a.checkedAt) - parseTime(b.checkedAt));
+  for (const entry of chronologicalHistory) {
+    const timestamp = parseTime(entry.checkedAt);
+    if (!Number.isFinite(timestamp)) {
+      continue;
+    }
+    minTime = Math.min(minTime, timestamp);
+    maxTime = Math.max(maxTime, timestamp);
+    const label = new Date(timestamp).toLocaleString();
+    for (const metric of entry.gpuMetrics ?? []) {
+      const value = pick(metric);
+      if (value === null || value === undefined || !Number.isFinite(value)) {
+        continue;
+      }
+      const points = gpuPoints.get(metric.gpuIndex) ?? [];
+      points.push({ timestamp, label, value });
+      gpuPoints.set(metric.gpuIndex, points);
+    }
+  }
+
+  return {
+    perGpu: [...gpuPoints.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([gpuIndex, points]) => ({ gpuIndex, points })),
     timeRange: Number.isFinite(minTime) && Number.isFinite(maxTime) ? { min: minTime, max: maxTime } : undefined,
   };
 }

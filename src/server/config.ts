@@ -18,6 +18,7 @@ export type AppConfig = {
   telegramBotToken: string;
   telegramChatId: string;
   notifyRecovery: boolean;
+  heartbeatUrl: string;
   host: string;
   port: number;
 };
@@ -44,6 +45,7 @@ export function loadConfig(env = process.env): AppConfig {
     telegramBotToken: value("TELEGRAM_BOT_TOKEN") || "",
     telegramChatId: value("TELEGRAM_CHAT_ID") || "",
     notifyRecovery: boolEnv(value("GPUCHECK_NOTIFY_RECOVERY"), false),
+    heartbeatUrl: value("GPUCHECK_HEARTBEAT_URL") || "",
     host: value("GPUCHECK_HOST") || "127.0.0.1",
     port: numberEnv(value("PORT"), 4100),
   };
