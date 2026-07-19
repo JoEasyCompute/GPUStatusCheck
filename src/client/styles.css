@@ -496,12 +496,8 @@ tbody tr {
   cursor: pointer;
 }
 
-tbody tr.group-row {
-  cursor: default;
-}
-
 tbody tr.group-row:hover {
-  background: transparent;
+  background: var(--surface-2);
 }
 
 .group-row td {
@@ -510,13 +506,6 @@ tbody tr.group-row:hover {
   font-size: 12.5px;
   font-weight: 650;
   padding: 6px 12px;
-}
-
-.group-row td span {
-  color: var(--ink-3);
-  font-variant-numeric: tabular-nums;
-  font-weight: 500;
-  margin-left: 7px;
 }
 
 tbody tr:hover {
@@ -568,25 +557,70 @@ tbody tr.selected {
 }
 
 .card-group-title {
-  align-items: baseline;
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
   color: var(--ink-2);
+  cursor: pointer;
   display: flex;
   font-size: 13px;
   font-weight: 650;
   gap: 7px;
   margin: 14px 0 8px;
+  min-height: 0;
+  padding: 2px 4px 2px 0;
+  text-align: left;
+  width: 100%;
+}
+
+.card-group-title:hover {
+  background: transparent;
+  color: var(--ink);
 }
 
 .machine-cards-wrap section:first-child .card-group-title {
   margin-top: 0;
 }
 
-.card-group-title span {
+.caret {
   color: var(--ink-3);
+  display: inline-block;
+  font-size: 10px;
+  width: 12px;
+}
+
+.group-stats {
+  align-items: center;
+  color: var(--ink-3);
+  display: inline-flex;
+  flex-wrap: wrap;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   font-weight: 500;
+  gap: 4px 12px;
+  margin-left: 10px;
 }
+
+.group-stats .grp {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.group-stats .grp i {
+  border-radius: 999px;
+  display: inline-block;
+  height: 7px;
+  width: 7px;
+}
+
+.group-stats .grp.ok { color: var(--good-ink); }
+.group-stats .grp.ok i { background: var(--good); }
+.group-stats .grp.degraded { color: var(--warn-ink); }
+.group-stats .grp.degraded i { background: var(--warn); }
+.group-stats .grp.failed { color: var(--crit-ink); }
+.group-stats .grp.failed i { background: var(--crit); }
 
 .machine-cards {
   display: grid;

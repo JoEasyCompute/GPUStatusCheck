@@ -24,6 +24,13 @@ export function formatStatus(status?: string): string {
   return statusLabels[status] ?? status;
 }
 
+export function formatWattsCompact(watts: number): string {
+  if (watts >= 10000) {
+    return `${(watts / 1000).toFixed(1)} kW`;
+  }
+  return `${Math.round(watts)} W`;
+}
+
 export function formatTime(value?: string): string {
   if (!value) {
     return "-";

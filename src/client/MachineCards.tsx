@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { MachineWithLatest } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
-import { buildMachineGroups, type MachineGroupBy } from "./machineGroups";
+import { GroupStats } from "./GroupStats";
+import { buildMachineGroups, computeGroupStats, type MachineGroupBy } from "./machineGroups";
 
 export function MachineCards({
   machines,
@@ -16,6 +17,19 @@ export function MachineCards({
   groupBy: MachineGroupBy;
 }) {
   const groups = useMemo(() => buildMachineGroups(machines, groupBy), [machines, groupBy]);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggleGroup = (label: string) => {
+    const key = `${groupBy}:${label}`;
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
 
   if (machines.length === 0) {
     return <p className="empty-chart">No machines match the current filter.</p>;
@@ -23,26 +37,32 @@ export function MachineCards({
 
   return (
     <div className="machine-cards-wrap">
-      {groups.map((group) => (
-        <section key={group.label ?? "__all__"}>
-          {group.label !== undefined ? (
-            <h3 className="card-group-title">
-              {group.label || "Unassigned"}
-              <span>{group.machines.length}</span>
-            </h3>
-          ) : null}
-          <div className="machine-cards">
-            {group.machines.map((machine) => (
-              <MachineCard
-                key={machine.id}
-                machine={machine}
-                selected={machine.id === selectedMachineId}
-                onSelect={onSelect}
-              />
-            ))}
-          </div>
-        </section>
-      ))}
+      {groups.map((group) => {
+        const isCollapsed = group.label !== undefined && collapsed.has(`${groupBy}:${group.label}`);
+        return (
+          <section key={group.label ?? "__all__"}>
+            {group.label !== undefined ? (
+              <button type="button" className="card-group-title" aria-expanded={!isCollapsed} onClick={() => toggleGroup(group.label!)}>
+                <span className="caret" aria-hidden="true">{isCollapsed ? "▸" : "▾"}</span>
+                {group.label || "Unassigned"}
+                <GroupStats stats={computeGroupStats(group.machines)} />
+              </button>
+            ) : null}
+            {!isCollapsed ? (
+              <div className="machine-cards">
+                {group.machines.map((machine) => (
+                  <MachineCard
+                    key={machine.id}
+                    machine={machine}
+                    selected={machine.id === selectedMachineId}
+                    onSelect={onSelect}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </section>
+        );
+      })}
     </div>
   );
 }

@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 import type { MachineWithLatest } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
-import { buildMachineGroups, type MachineGroupBy } from "./machineGroups";
+import { GroupStats } from "./GroupStats";
+import { buildMachineGroups, computeGroupStats, type MachineGroupBy } from "./machineGroups";
 import { sortMachines, type MachineSort, type MachineSortKey } from "./machineSort";
 
 export function MachineTable({
@@ -17,6 +18,19 @@ export function MachineTable({
   groupBy: MachineGroupBy;
 }) {
   const [sort, setSort] = useState<MachineSort>({ key: "name", direction: "asc" });
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggleGroup = (label: string) => {
+    const key = `${groupBy}:${label}`;
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
   const groups = useMemo(
     () => buildMachineGroups(machines, groupBy).map((group) => ({
       ...group,
@@ -53,15 +67,21 @@ export function MachineTable({
           {groups.flatMap((group) => [
             ...(group.label !== undefined
               ? [(
-                <tr key={`group-${group.label}`} className="group-row">
+                <tr
+                  key={`group-${group.label}`}
+                  className="group-row"
+                  aria-expanded={!collapsed.has(`${groupBy}:${group.label}`)}
+                  onClick={() => toggleGroup(group.label!)}
+                >
                   <td colSpan={11}>
+                    <span className="caret" aria-hidden="true">{collapsed.has(`${groupBy}:${group.label}`) ? "▸" : "▾"}</span>
                     {group.label || "Unassigned"}
-                    <span>{group.machines.length}</span>
+                    <GroupStats stats={computeGroupStats(group.machines)} />
                   </td>
                 </tr>
               )]
               : []),
-            ...group.machines.map((machine) => (
+            ...(group.label !== undefined && collapsed.has(`${groupBy}:${group.label}`) ? [] : group.machines).map((machine) => (
             <tr key={machine.id} className={machine.id === selectedMachineId ? "selected" : ""} onClick={() => onSelect(machine.id!)}>
               <td className="name-cell">{machine.name}</td>
               <td>
