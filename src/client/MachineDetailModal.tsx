@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { GpuProcess, MachineWithLatest, ProbeResult } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
+import { GpuJobPills } from "./GpuJobPills";
 import { GpuCharts } from "./PowerCharts";
 
 export function MachineDetailModal({
@@ -80,7 +81,7 @@ function DetailPane({ machine, history, processes }: { machine: MachineWithLates
         <div><dt>SSH user</dt><dd>{latest?.sshUser || "-"}</dd></div>
         <div><dt>Uptime</dt><dd>{latest?.uptime || "-"}</dd></div>
         <div><dt>GPU type</dt><dd>{latest?.gpuType || "-"}</dd></div>
-        <div><dt>GPU jobs</dt><dd className="mono">{latest?.gpuJobs || "-"}</dd></div>
+        <div><dt>GPU jobs</dt><dd><GpuJobPills latest={latest} /></dd></div>
         <div><dt>Net I/O</dt><dd>{formatNetRates(latest)}</dd></div>
         <div><dt>SSH error</dt><dd>{errorText || "-"}</dd></div>
         <div><dt>Bus-off</dt><dd>{busOffText || "-"}</dd></div>

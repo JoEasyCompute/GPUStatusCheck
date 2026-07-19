@@ -691,7 +691,8 @@ tbody tr.selected {
   font-size: 12.5px;
 }
 
-.machine-card .gpu-pills {
+.machine-card .gpu-pills,
+.metadata .gpu-pills {
   flex-wrap: wrap;
 }
 
