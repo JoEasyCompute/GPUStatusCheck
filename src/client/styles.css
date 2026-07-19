@@ -928,7 +928,7 @@ tbody tr.selected {
   margin: 0 0 18px;
 }
 
-.metadata div {
+.metadata > div {
   display: grid;
   grid-template-columns: 84px 1fr;
   min-width: 0;
