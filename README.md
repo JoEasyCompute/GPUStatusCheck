@@ -5,15 +5,23 @@ looks healthy or if there are signs of a GPU "fallen off the bus" condition.
 
 ## What it does
 
-For each machine, the script:
+For each machine, the probe:
 
-1. SSHes in with a configurable username and private key
-2. Runs `nvidia-smi -L`
-3. Checks which GPUs have active `nvidia-smi pmon` process rows
-4. Sums current GPU power draw in watts
-5. Averages current GPU temperature in Celsius
-6. Checks recent kernel logs for common GPU bus-off patterns
+1. SSHes in with a configurable username and private key (with an automatic
+   fallback user on auth failure)
+2. Runs `nvidia-smi -L` and collects per-GPU telemetry (utilization, memory,
+   temperature, power, clocks, PCIe bus id)
+3. Checks which GPUs have active `nvidia-smi pmon` process rows and enriches
+   them with `ps` command lines
+4. Sums current GPU power draw in watts and averages GPU temperature
+5. Samples network traffic in/out (two `/proc/net/dev` readings one second
+   apart, physical interfaces only)
+6. Captures machine uptime and checks recent kernel logs for common GPU
+   bus-off patterns
 7. Prints a summary table and optionally JSON
+
+The probe writes nothing to the target host's disk, so it stays accurate even
+on machines with a full filesystem.
 
 It can also run in a watch loop and send Telegram alerts when a machine
 changes from healthy to degraded or SSH-failed. Duplicate alerts are suppressed
@@ -133,7 +141,20 @@ python3 gpu_status_check.py --machines machines.csv --jobs 16 --skip-logs
 ## Web dashboard
 
 The Node.js dashboard polls the same CSV inventory over SSH, stores history in
-SQLite, and serves a local React dashboard.
+SQLite, and serves a React dashboard with:
+
+- Summary tiles (machine counts by status, total fleet power, average temp)
+- A collapsible fleet history panel (total power and status counts over 24h)
+- Two display modes — a sortable table and a card grid whose border color
+  shows machine status — with optional grouping by owner or location; group
+  headers are collapsible and summarize count, ok/degraded/ssh-failed, total
+  and average power, and average temperature
+- A per-machine modal with metadata, tabbed charts (Power, Temperature,
+  Utilization, Network in/out) over the last 24 hours with pinch-to-zoom and
+  drag-to-pan, GPU process history, and probe history; clicking the IP copies
+  a ready-to-use SSH command
+- Built-in Telegram alerting, maintenance mode, and a health/watchdog endpoint
+  (see sections below)
 
 Install dependencies:
 
