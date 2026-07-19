@@ -43,7 +43,7 @@ export function FleetCharts() {
   };
 
   return (
-    <details className="panel fleet-panel" open>
+    <details className="panel fleet-panel">
       <summary>
         <h2>Fleet history (24h)</h2>
         {view ? (

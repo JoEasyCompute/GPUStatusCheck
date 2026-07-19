@@ -533,6 +533,144 @@ tbody tr.selected {
   font-family: var(--font-mono);
 }
 
+/* ---------- machine cards ---------- */
+
+.view-toggle {
+  flex: none;
+}
+
+.machine-cards-wrap {
+  display: grid;
+  gap: 4px;
+}
+
+.card-group-title {
+  align-items: baseline;
+  color: var(--ink-2);
+  display: flex;
+  font-size: 13px;
+  font-weight: 650;
+  gap: 7px;
+  margin: 14px 0 8px;
+}
+
+.machine-cards-wrap section:first-child .card-group-title {
+  margin-top: 0;
+}
+
+.card-group-title span {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.machine-cards {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+}
+
+.machine-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-left: 4px solid var(--axis);
+  border-radius: 10px;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  transition: box-shadow 120ms ease, background 120ms ease;
+}
+
+.machine-card:hover {
+  box-shadow: var(--shadow-pop);
+}
+
+.machine-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.machine-card.ok {
+  border-left-color: var(--good);
+}
+
+.machine-card.degraded {
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  border-left-color: var(--warn);
+}
+
+.machine-card.ssh_failed {
+  border-color: color-mix(in srgb, var(--crit) 40%, transparent);
+  border-left-color: var(--crit);
+}
+
+.machine-card.selected {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.card-head {
+  align-items: center;
+  display: flex;
+  gap: 7px;
+}
+
+.card-name {
+  flex: 1;
+  font-size: 13.5px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-head .chip.maintenance {
+  margin-left: 0;
+}
+
+.card-gpu {
+  color: var(--ink-2);
+  font-size: 12.5px;
+}
+
+.machine-card .gpu-pills {
+  flex-wrap: wrap;
+}
+
+.card-meta {
+  display: grid;
+  font-size: 12px;
+  gap: 4px 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+}
+
+.card-meta div {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.card-meta dt {
+  color: var(--ink-3);
+  flex: none;
+  font-size: 11.5px;
+}
+
+.card-meta dd {
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-checked {
+  grid-column: 1 / -1;
+}
+
 /* ---------- status badge ---------- */
 
 .status {

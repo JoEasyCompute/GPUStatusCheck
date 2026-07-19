@@ -3,11 +3,30 @@ import { buildSshCommand } from "../shared/ssh";
 import type { EditableRuntimeConfig, GpuProcess, MachineWithLatest, PollStatus, ProbeResult, RuntimeConfig, Summary } from "../shared/types";
 import { copyText } from "./clipboard";
 import { FleetCharts } from "./FleetCharts";
+import { MachineCards, type CardGroupBy } from "./MachineCards";
 import { MachineDetailModal } from "./MachineDetailModal";
 import { MachineTable } from "./MachineTable";
 import { formatElapsed, formatTime } from "./formatters";
 
 type StatusFilter = "all" | "ok" | "degraded" | "ssh_failed";
+type ViewMode = "table" | "cards";
+
+function storedChoice<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
+  try {
+    const value = window.localStorage.getItem(key);
+    return allowed.includes(value as T) ? (value as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function storeChoice(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Private browsing or storage disabled; the choice just won't persist.
+  }
+}
 
 const emptySummary: Summary = {
   total: 0,
@@ -31,6 +50,8 @@ export function App() {
   const [processes, setProcesses] = useState<GpuProcess[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<ViewMode>(() => storedChoice("gpucheck.viewMode", ["table", "cards"], "table"));
+  const [groupBy, setGroupBy] = useState<CardGroupBy>(() => storedChoice("gpucheck.groupBy", ["none", "owner", "location"], "none"));
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState("");
   const [config, setConfig] = useState<RuntimeConfig | undefined>();
@@ -333,11 +354,53 @@ export function App() {
           <option value="degraded">Degraded</option>
           <option value="ssh_failed">SSH failed</option>
         </select>
+        <div className="chart-tabs view-toggle" role="tablist" aria-label="Display mode">
+          <button
+            role="tab"
+            aria-selected={viewMode === "table"}
+            className={`chart-tab ${viewMode === "table" ? "active" : ""}`}
+            onClick={() => {
+              setViewMode("table");
+              storeChoice("gpucheck.viewMode", "table");
+            }}
+          >
+            Table
+          </button>
+          <button
+            role="tab"
+            aria-selected={viewMode === "cards"}
+            className={`chart-tab ${viewMode === "cards" ? "active" : ""}`}
+            onClick={() => {
+              setViewMode("cards");
+              storeChoice("gpucheck.viewMode", "cards");
+            }}
+          >
+            Cards
+          </button>
+        </div>
+        {viewMode === "cards" ? (
+          <select
+            value={groupBy}
+            onChange={(event) => {
+              const next = event.target.value as CardGroupBy;
+              setGroupBy(next);
+              storeChoice("gpucheck.groupBy", next);
+            }}
+          >
+            <option value="none">No grouping</option>
+            <option value="owner">Group by owner</option>
+            <option value="location">Group by location</option>
+          </select>
+        ) : null}
         <span className="toolbar-count">{filteredMachines.length} of {machines.length} machines</span>
       </section>
 
       <section className="layout">
-        <MachineTable machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} />
+        {viewMode === "table" ? (
+          <MachineTable machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} />
+        ) : (
+          <MachineCards machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} groupBy={groupBy} />
+        )}
       </section>
 
       {selectedMachine ? (
