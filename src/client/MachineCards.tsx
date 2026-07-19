@@ -2,8 +2,7 @@ import { useMemo } from "react";
 import type { MachineWithLatest } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
-
-export type CardGroupBy = "none" | "owner" | "location";
+import { buildMachineGroups, type MachineGroupBy } from "./machineGroups";
 
 export function MachineCards({
   machines,
@@ -14,9 +13,9 @@ export function MachineCards({
   machines: MachineWithLatest[];
   selectedMachineId?: number;
   onSelect: (id: number) => void;
-  groupBy: CardGroupBy;
+  groupBy: MachineGroupBy;
 }) {
-  const groups = useMemo(() => buildGroups(machines, groupBy), [machines, groupBy]);
+  const groups = useMemo(() => buildMachineGroups(machines, groupBy), [machines, groupBy]);
 
   if (machines.length === 0) {
     return <p className="empty-chart">No machines match the current filter.</p>;
@@ -92,25 +91,3 @@ function MachineCard({
   );
 }
 
-type CardGroup = { label?: string; machines: MachineWithLatest[] };
-
-function buildGroups(machines: MachineWithLatest[], groupBy: CardGroupBy): CardGroup[] {
-  const byName = [...machines].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  if (groupBy === "none") {
-    return [{ machines: byName }];
-  }
-  const groups = new Map<string, MachineWithLatest[]>();
-  for (const machine of byName) {
-    const key = ((groupBy === "owner" ? machine.owner : machine.location) ?? "").trim();
-    const group = groups.get(key) ?? [];
-    group.push(machine);
-    groups.set(key, group);
-  }
-  return [...groups.entries()]
-    .sort(([a], [b]) => {
-      if (a === "") return 1;
-      if (b === "") return -1;
-      return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
-    })
-    .map(([label, groupMachines]) => ({ label, machines: groupMachines }));
-}

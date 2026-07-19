@@ -2,19 +2,28 @@ import { useMemo, useState } from "react";
 import type { MachineWithLatest } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
+import { buildMachineGroups, type MachineGroupBy } from "./machineGroups";
 import { sortMachines, type MachineSort, type MachineSortKey } from "./machineSort";
 
 export function MachineTable({
   machines,
   selectedMachineId,
   onSelect,
+  groupBy,
 }: {
   machines: MachineWithLatest[];
   selectedMachineId?: number;
   onSelect: (id: number) => void;
+  groupBy: MachineGroupBy;
 }) {
   const [sort, setSort] = useState<MachineSort>({ key: "name", direction: "asc" });
-  const sortedMachines = useMemo(() => sortMachines(machines, sort), [machines, sort]);
+  const groups = useMemo(
+    () => buildMachineGroups(machines, groupBy).map((group) => ({
+      ...group,
+      machines: sortMachines(group.machines, sort),
+    })),
+    [machines, groupBy, sort],
+  );
   const toggleSort = (key: MachineSortKey) => {
     setSort((current) => ({
       key,
@@ -41,7 +50,18 @@ export function MachineTable({
           </tr>
         </thead>
         <tbody>
-          {sortedMachines.map((machine) => (
+          {groups.flatMap((group) => [
+            ...(group.label !== undefined
+              ? [(
+                <tr key={`group-${group.label}`} className="group-row">
+                  <td colSpan={11}>
+                    {group.label || "Unassigned"}
+                    <span>{group.machines.length}</span>
+                  </td>
+                </tr>
+              )]
+              : []),
+            ...group.machines.map((machine) => (
             <tr key={machine.id} className={machine.id === selectedMachineId ? "selected" : ""} onClick={() => onSelect(machine.id!)}>
               <td className="name-cell">{machine.name}</td>
               <td>
@@ -58,7 +78,8 @@ export function MachineTable({
               <td className="num">{machine.latest?.gpuAvgTempC || "-"}</td>
               <td className="time-cell">{formatTime(machine.latest?.checkedAt)}</td>
             </tr>
-          ))}
+            )),
+          ])}
         </tbody>
       </table>
     </div>

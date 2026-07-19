@@ -496,6 +496,29 @@ tbody tr {
   cursor: pointer;
 }
 
+tbody tr.group-row {
+  cursor: default;
+}
+
+tbody tr.group-row:hover {
+  background: transparent;
+}
+
+.group-row td {
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 650;
+  padding: 6px 12px;
+}
+
+.group-row td span {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  margin-left: 7px;
+}
+
 tbody tr:hover {
   background: var(--surface-2);
 }

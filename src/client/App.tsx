@@ -3,7 +3,8 @@ import { buildSshCommand } from "../shared/ssh";
 import type { EditableRuntimeConfig, GpuProcess, MachineWithLatest, PollStatus, ProbeResult, RuntimeConfig, Summary } from "../shared/types";
 import { copyText } from "./clipboard";
 import { FleetCharts } from "./FleetCharts";
-import { MachineCards, type CardGroupBy } from "./MachineCards";
+import { MachineCards } from "./MachineCards";
+import type { MachineGroupBy } from "./machineGroups";
 import { MachineDetailModal } from "./MachineDetailModal";
 import { MachineTable } from "./MachineTable";
 import { formatElapsed, formatTime } from "./formatters";
@@ -51,7 +52,7 @@ export function App() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>(() => storedChoice("gpucheck.viewMode", ["table", "cards"], "table"));
-  const [groupBy, setGroupBy] = useState<CardGroupBy>(() => storedChoice("gpucheck.groupBy", ["none", "owner", "location"], "none"));
+  const [groupBy, setGroupBy] = useState<MachineGroupBy>(() => storedChoice("gpucheck.groupBy", ["none", "owner", "location"], "none"));
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState("");
   const [config, setConfig] = useState<RuntimeConfig | undefined>();
@@ -378,26 +379,24 @@ export function App() {
             Cards
           </button>
         </div>
-        {viewMode === "cards" ? (
-          <select
-            value={groupBy}
-            onChange={(event) => {
-              const next = event.target.value as CardGroupBy;
-              setGroupBy(next);
-              storeChoice("gpucheck.groupBy", next);
-            }}
-          >
-            <option value="none">No grouping</option>
-            <option value="owner">Group by owner</option>
-            <option value="location">Group by location</option>
-          </select>
-        ) : null}
+        <select
+          value={groupBy}
+          onChange={(event) => {
+            const next = event.target.value as MachineGroupBy;
+            setGroupBy(next);
+            storeChoice("gpucheck.groupBy", next);
+          }}
+        >
+          <option value="none">No grouping</option>
+          <option value="owner">Group by owner</option>
+          <option value="location">Group by location</option>
+        </select>
         <span className="toolbar-count">{filteredMachines.length} of {machines.length} machines</span>
       </section>
 
       <section className="layout">
         {viewMode === "table" ? (
-          <MachineTable machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} />
+          <MachineTable machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} groupBy={groupBy} />
         ) : (
           <MachineCards machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} groupBy={groupBy} />
         )}
