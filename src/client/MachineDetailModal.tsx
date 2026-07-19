@@ -132,7 +132,7 @@ function DetailPane({ machine, history, processes }: { machine: MachineWithLates
             <div className="history-row" key={entry.id ?? `${entry.checkedAt}-${index}`}>
               <span className={`status ${entry.status}`}>{formatStatus(entry.status)}</span>
               <span>{formatTime(entry.checkedAt)}</span>
-              <span className="mono">{entry.gpuJobs || "-"}</span>
+              <GpuJobPills latest={entry} />
               <span>{entry.gpuPowerW ? `${entry.gpuPowerW} W` : "-"}</span>
               <span>{entry.gpuAvgTempC ? `${entry.gpuAvgTempC} °C` : "-"}</span>
             </div>
