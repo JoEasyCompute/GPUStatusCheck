@@ -60,6 +60,7 @@ export function readInventoryText(text: string): Machine[] {
         platform: valueAt(row, idx("platform")),
         owner: valueAt(row, idx("owner")),
         commissionDate: valueAt(row, firstIndex(headers, ["commission_date", "commissioned_date", "commissioned"])),
+        location: valueAt(row, idx("location")),
       },
     ];
   });

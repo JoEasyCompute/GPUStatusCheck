@@ -8,12 +8,10 @@ export function MachineTable({
   machines,
   selectedMachineId,
   onSelect,
-  onCopySsh,
 }: {
   machines: MachineWithLatest[];
   selectedMachineId?: number;
   onSelect: (id: number) => void;
-  onCopySsh: (machine: MachineWithLatest) => void;
 }) {
   const [sort, setSort] = useState<MachineSort>({ key: "name", direction: "asc" });
   const sortedMachines = useMemo(() => sortMachines(machines, sort), [machines, sort]);
@@ -31,7 +29,7 @@ export function MachineTable({
           <tr>
             <SortableHeader label="Machine" sortKey="name" sort={sort} onSort={toggleSort} />
             <SortableHeader label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
-            <SortableHeader label="IP" sortKey="ip" sort={sort} onSort={toggleSort} />
+            <SortableHeader label="Location" sortKey="location" sort={sort} onSort={toggleSort} />
             <SortableHeader label="Owner" sortKey="owner" sort={sort} onSort={toggleSort} />
             <SortableHeader label="GPU type" sortKey="gpuType" sort={sort} onSort={toggleSort} />
             <SortableHeader label="GPUs" sortKey="gpus" sort={sort} onSort={toggleSort} align="num" />
@@ -50,28 +48,7 @@ export function MachineTable({
                 <span className={`status ${machine.latest?.status ?? "unknown"}`}>{formatStatus(machine.latest?.status)}</span>
                 {machine.maintenance ? <span className="chip maintenance" title="Alerts muted while in maintenance">M</span> : null}
               </td>
-              <td>
-                <button
-                  className="ip-copy"
-                  title="Ctrl-click or Command-click to copy SSH command"
-                  onClick={(event) => {
-                    if (event.ctrlKey || event.metaKey) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      onCopySsh(machine);
-                    }
-                  }}
-                  onContextMenu={(event) => {
-                    if (event.ctrlKey) {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      onCopySsh(machine);
-                    }
-                  }}
-                >
-                  {machine.ip}
-                </button>
-              </td>
+              <td>{machine.location || "-"}</td>
               <td>{machine.owner || "-"}</td>
               <td>{machine.latest?.gpuType || "-"}</td>
               <td className="num">{machine.latest?.gpuCount ?? "-"}</td>

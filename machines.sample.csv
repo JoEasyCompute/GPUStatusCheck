@@ -1,3 +1,3 @@
-name,ip,platform,owner,commission_date,uptime
-example-gc-01,192.0.2.10,gc,ops,2026-01-15,
-example-gc-02,198.51.100.20:2222,n07,research,2026-01-20,
+name,ip,platform,owner,commission_date,location
+example-gc-01,192.0.2.10,gc,ops,2026-01-15,rack-a1
+example-n07-02,198.51.100.20:2222,n07,research,2026-01-20,shed-2

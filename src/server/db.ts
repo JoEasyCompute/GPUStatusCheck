@@ -139,6 +139,7 @@ export function createDatabase(dbPath: string) {
       CREATE INDEX IF NOT EXISTS idx_probe_results_run ON probe_results(poll_run_id);
     `);
     ensureColumn(db, "machines", "maintenance", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn(db, "machines", "location", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "machines", "expected_gpu_count", "INTEGER");
     ensureColumn(db, "probe_results", "gpu_type", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "probe_results", "ssh_user", "TEXT NOT NULL DEFAULT ''");
@@ -151,8 +152,8 @@ export function createDatabase(dbPath: string) {
   function upsertMachine(machine: Machine): Machine {
     const now = new Date().toISOString();
     db.prepare(`
-      INSERT INTO machines (name, ip, ssh_host, ssh_port, platform, owner, commission_date, active, created_at, updated_at)
-      VALUES (@name, @ip, @sshHost, @sshPort, @platform, @owner, @commissionDate, 1, @now, @now)
+      INSERT INTO machines (name, ip, ssh_host, ssh_port, platform, owner, commission_date, location, active, created_at, updated_at)
+      VALUES (@name, @ip, @sshHost, @sshPort, @platform, @owner, @commissionDate, @location, 1, @now, @now)
       ON CONFLICT(name) DO UPDATE SET
         ip = excluded.ip,
         ssh_host = excluded.ssh_host,
@@ -160,6 +161,7 @@ export function createDatabase(dbPath: string) {
         platform = excluded.platform,
         owner = excluded.owner,
         commission_date = excluded.commission_date,
+        location = excluded.location,
         active = 1,
         updated_at = excluded.updated_at
     `).run({
@@ -170,6 +172,7 @@ export function createDatabase(dbPath: string) {
       platform: machine.platform ?? "",
       owner: machine.owner ?? "",
       commissionDate: machine.commissionDate ?? "",
+      location: machine.location ?? "",
       now,
     });
     return rowToMachine(db.prepare("SELECT * FROM machines WHERE name = ?").get(machine.name) as MachineRow);
@@ -520,6 +523,7 @@ type MachineRow = {
   platform: string;
   owner: string;
   commission_date: string;
+  location: string;
   active: number;
   maintenance: number;
   expected_gpu_count: number | null;
@@ -624,6 +628,7 @@ function rowToMachine(row: MachineRow): Machine {
     platform: row.platform,
     owner: row.owner,
     commissionDate: row.commission_date,
+    location: row.location ?? "",
     active: row.active === 1,
     maintenance: row.maintenance === 1,
     expectedGpuCount: row.expected_gpu_count,

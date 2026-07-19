@@ -7,8 +7,8 @@ import { parseSshDestination, readInventoryFromFile, readInventoryText } from ".
 describe("inventory", () => {
   it("reads headered CSV inventory and trims fields", () => {
     const machines = readInventoryText(
-      "name,ip,platform,owner,commission_date,uptime\n" +
-        "alpha,10.0.0.1,gc,ops,2026-01-01,up 3 days\n" +
+      "name,ip,platform,owner,commission_date,location\n" +
+        "alpha,10.0.0.1,gc,ops,2026-01-01,rack-a1\n" +
         "beta,10.0.0.2:2222,n07,research,2026-01-02,\n",
     );
 
@@ -21,6 +21,7 @@ describe("inventory", () => {
         platform: "gc",
         owner: "ops",
         commissionDate: "2026-01-01",
+        location: "rack-a1",
       },
       {
         name: "beta",
@@ -30,6 +31,7 @@ describe("inventory", () => {
         platform: "n07",
         owner: "research",
         commissionDate: "2026-01-02",
+        location: "",
       },
     ]);
   });

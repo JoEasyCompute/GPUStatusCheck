@@ -217,7 +217,7 @@ export function App() {
     return machines.filter((machine) => {
       const status = machine.latest?.status ?? "unknown";
       const statusMatches = statusFilter === "all" || status === statusFilter;
-      const searchMatches = !needle || [machine.name, machine.ip, machine.platform, machine.owner]
+      const searchMatches = !needle || [machine.name, machine.ip, machine.platform, machine.owner, machine.location]
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(needle));
       return statusMatches && searchMatches;
@@ -326,7 +326,7 @@ export function App() {
       <FleetCharts />
 
       <section className="toolbar">
-        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, IP, platform, owner" />
+        <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, IP, platform, owner, location" />
         <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
           <option value="all">All statuses</option>
           <option value="ok">OK</option>
@@ -337,7 +337,7 @@ export function App() {
       </section>
 
       <section className="layout">
-        <MachineTable machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} onCopySsh={copySshCommand} />
+        <MachineTable machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} />
       </section>
 
       {selectedMachine ? (

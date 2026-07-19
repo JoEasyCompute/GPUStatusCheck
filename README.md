@@ -57,8 +57,8 @@ TELEGRAM_CHAT_ID=-1001234567890
 The preferred `machines.csv` format is headered and backward compatible:
 
 ```csv
-name,ip,platform,owner,commission_date
-ezc-gc-05e,217.138.104.127,gc,ezc,2024-05-12
+name,ip,platform,owner,commission_date,location
+ezc-gc-05e,217.138.104.127,gc,ezc,2024-05-12,rack-a1
 ```
 
 Start from the sample file:
@@ -72,6 +72,7 @@ cp machines.sample.csv machines.csv
 - `platform` — e.g. `gc`, `n07`, `edge`
 - `owner` — responsible owner/team
 - `commission_date` — `YYYY-MM-DD`
+- `location` — physical location label, shown in the dashboard table and modal
 - `uptime` — collected at probe time and shown in the report
 
 Older two-column files with just `name,ip` still work.

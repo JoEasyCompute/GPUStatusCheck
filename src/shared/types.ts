@@ -7,6 +7,7 @@ export type Machine = {
   platform?: string;
   owner?: string;
   commissionDate?: string;
+  location?: string;
   active?: boolean;
   maintenance?: boolean;
   expectedGpuCount?: number | null;

@@ -64,6 +64,7 @@ class Machine:
     platform: str = ""
     owner: str = ""
     commission_date: str = ""
+    location: str = ""
     uptime: str = ""
 
 
@@ -74,6 +75,7 @@ class ProbeResult:
     platform: str = ""
     owner: str = ""
     commission_date: str = ""
+    location: str = ""
     uptime: str = ""
     ssh_ok: bool = False
     ssh_error: str = ""
@@ -229,6 +231,7 @@ def read_machines(csv_path: Path) -> List[Machine]:
                 "commissioned_date",
                 "commissioned",
             )
+            location = _first_header_value(row, header_map, "location")
             uptime = _first_header_value(row, header_map, "uptime")
             if not name and not ip:
                 continue
@@ -243,6 +246,7 @@ def read_machines(csv_path: Path) -> List[Machine]:
                     platform=platform,
                     owner=owner,
                     commission_date=commission_date,
+                    location=location,
                     uptime=uptime,
                 )
             )
@@ -494,6 +498,7 @@ def _run_ssh_probe_as(
         platform=machine.platform,
         owner=machine.owner,
         commission_date=machine.commission_date,
+        location=machine.location,
         uptime=machine.uptime,
         ssh_ok=False,
     )

@@ -1,6 +1,6 @@
 import type { MachineWithLatest } from "../shared/types";
 
-export type MachineSortKey = "name" | "status" | "ip" | "owner" | "gpuType" | "gpus" | "jobs" | "notes" | "power" | "temp" | "checked";
+export type MachineSortKey = "name" | "status" | "location" | "owner" | "gpuType" | "gpus" | "jobs" | "notes" | "power" | "temp" | "checked";
 
 export type MachineSort = {
   key: MachineSortKey;
@@ -20,8 +20,8 @@ function sortValue(machine: MachineWithLatest, key: MachineSortKey): string | nu
       return machine.name;
     case "status":
       return machine.latest?.status ?? "unknown";
-    case "ip":
-      return machine.ip;
+    case "location":
+      return machine.location ?? "";
     case "owner":
       return machine.owner ?? "";
     case "gpuType":
