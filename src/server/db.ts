@@ -143,6 +143,8 @@ export function createDatabase(dbPath: string) {
     ensureColumn(db, "machines", "expected_gpu_count", "INTEGER");
     ensureColumn(db, "probe_results", "gpu_type", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "probe_results", "ssh_user", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(db, "probe_results", "net_rx_bps", "REAL");
+    ensureColumn(db, "probe_results", "net_tx_bps", "REAL");
     ensureColumn(db, "gpu_metrics", "pci_bus_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_metrics", "power_limit_w", "REAL");
     ensureColumn(db, "gpu_metrics", "graphics_clock_mhz", "INTEGER");
@@ -200,12 +202,12 @@ export function createDatabase(dbPath: string) {
     const info = db.prepare(`
       INSERT INTO probe_results (
         poll_run_id, machine_id, checked_at, status, ssh_ok, ssh_error, ssh_user, remote_host, uptime,
-        nvidia_smi_rc, gpu_count, gpu_type, gpu_jobs, gpu_power_w, gpu_avg_temp_c, bus_off_suspected,
+        nvidia_smi_rc, gpu_count, gpu_type, gpu_jobs, gpu_power_w, gpu_avg_temp_c, net_rx_bps, net_tx_bps, bus_off_suspected,
         bus_off_reason, kernel_hits, nvidia_smi_output, nvidia_smi_error, duration_ms
       )
       VALUES (
         @pollRunId, @machineId, @checkedAt, @status, @sshOk, @sshError, @sshUser, @remoteHost, @uptime,
-        @nvidiaSmiRc, @gpuCount, @gpuType, @gpuJobs, @gpuPowerW, @gpuAvgTempC, @busOffSuspected,
+        @nvidiaSmiRc, @gpuCount, @gpuType, @gpuJobs, @gpuPowerW, @gpuAvgTempC, @netRxBps, @netTxBps, @busOffSuspected,
         @busOffReason, @kernelHits, @nvidiaSmiOutput, @nvidiaSmiError, @durationMs
       )
     `).run({
@@ -224,6 +226,8 @@ export function createDatabase(dbPath: string) {
       gpuJobs: result.gpuJobs ?? "",
       gpuPowerW: parseNullableNumber(result.gpuPowerW),
       gpuAvgTempC: parseNullableNumber(result.gpuAvgTempC),
+      netRxBps: result.netRxBps ?? null,
+      netTxBps: result.netTxBps ?? null,
       busOffSuspected: result.busOffSuspected ? 1 : 0,
       busOffReason: result.busOffReason ?? "",
       kernelHits: result.kernelHits ?? "",
@@ -272,7 +276,7 @@ export function createDatabase(dbPath: string) {
     const rows = db.prepare(`
       SELECT m.*, pr.id AS latest_id, pr.checked_at, pr.status, pr.ssh_ok, pr.ssh_error, pr.ssh_user, pr.remote_host,
              pr.uptime, pr.nvidia_smi_rc, pr.gpu_count, pr.gpu_type, pr.gpu_jobs, pr.gpu_power_w,
-             pr.gpu_avg_temp_c, pr.bus_off_suspected, pr.bus_off_reason, pr.duration_ms
+             pr.gpu_avg_temp_c, pr.net_rx_bps, pr.net_tx_bps, pr.bus_off_suspected, pr.bus_off_reason, pr.duration_ms
       FROM machines m
       LEFT JOIN probe_results pr ON pr.id = (
         SELECT id FROM probe_results latest
@@ -550,6 +554,8 @@ type ProbeRow = {
   gpu_jobs: string;
   gpu_power_w: number | null;
   gpu_avg_temp_c: number | null;
+  net_rx_bps: number | null;
+  net_tx_bps: number | null;
   bus_off_suspected: number;
   bus_off_reason: string;
   kernel_hits: string;
@@ -658,6 +664,8 @@ function rowToMachineWithLatest(row: LatestMachineRow, db: Sqlite): MachineWithL
       gpu_jobs: row.gpu_jobs ?? "",
       gpu_power_w: row.gpu_power_w ?? null,
       gpu_avg_temp_c: row.gpu_avg_temp_c ?? null,
+      net_rx_bps: row.net_rx_bps ?? null,
+      net_tx_bps: row.net_tx_bps ?? null,
       bus_off_suspected: row.bus_off_suspected ?? 0,
       bus_off_reason: row.bus_off_reason ?? "",
       kernel_hits: "",
@@ -743,6 +751,8 @@ function rowToProbeResult(row: ProbeRow): ProbeResult {
     gpuJobs: row.gpu_jobs,
     gpuPowerW: row.gpu_power_w === null ? "" : row.gpu_power_w.toFixed(1),
     gpuAvgTempC: row.gpu_avg_temp_c === null ? "" : row.gpu_avg_temp_c.toFixed(1),
+    netRxBps: row.net_rx_bps,
+    netTxBps: row.net_tx_bps,
     busOffSuspected: row.bus_off_suspected === 1,
     busOffReason: row.bus_off_reason,
     kernelHits: row.kernel_hits,

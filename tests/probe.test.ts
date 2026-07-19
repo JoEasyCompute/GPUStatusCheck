@@ -14,6 +14,8 @@ describe("probe parsing", () => {
         "GPU_JOBS=DDDDxxxx",
         "GPU_POWER_W=1234.6",
         "GPU_AVG_TEMP_C=67.5",
+        "NET_RX_BPS=1250000",
+        "NET_TX_BPS=340000",
         "BUS_OFF=0",
         "GPU_METRICS<<__GPUCHECK_EOF__",
         "0, 00000000:65:00.0, 91, 42, 67, 312.5, 450.0, 2520, 10501",
@@ -38,6 +40,8 @@ describe("probe parsing", () => {
     expect(parsed.gpuJobs).toBe("DDDDxxxx");
     expect(parsed.gpuPowerW).toBe("1234.6");
     expect(parsed.gpuAvgTempC).toBe("67.5");
+    expect(parsed.netRxBps).toBe(1250000);
+    expect(parsed.netTxBps).toBe(340000);
     expect(parsed.gpuMetrics).toEqual([
       { gpuIndex: 0, pciBusId: "00000000:65:00.0", gpuUtil: 91, memUtil: 42, tempC: 67, powerW: 312.5, powerLimitW: 450, graphicsClockMhz: 2520, memoryClockMhz: 10501 },
       { gpuIndex: 1, pciBusId: "00000000:B3:00.0", gpuUtil: 0, memUtil: 0, tempC: 51, powerW: 48.2, powerLimitW: 450, graphicsClockMhz: 210, memoryClockMhz: 405 },

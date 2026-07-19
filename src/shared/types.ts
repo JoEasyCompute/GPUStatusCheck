@@ -92,6 +92,8 @@ export type ProbeResult = {
   gpuJobs?: string;
   gpuPowerW?: string;
   gpuAvgTempC?: string;
+  netRxBps?: number | null;
+  netTxBps?: number | null;
   busOffSuspected?: boolean;
   busOffReason?: string;
   nvidiaSmiOutput?: string;

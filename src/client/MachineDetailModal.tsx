@@ -81,6 +81,7 @@ function DetailPane({ machine, history, processes }: { machine: MachineWithLates
         <div><dt>Uptime</dt><dd>{latest?.uptime || "-"}</dd></div>
         <div><dt>GPU type</dt><dd>{latest?.gpuType || "-"}</dd></div>
         <div><dt>GPU jobs</dt><dd className="mono">{latest?.gpuJobs || "-"}</dd></div>
+        <div><dt>Net I/O</dt><dd>{formatNetRates(latest)}</dd></div>
         <div><dt>SSH error</dt><dd>{errorText || "-"}</dd></div>
         <div><dt>Bus-off</dt><dd>{busOffText || "-"}</dd></div>
         <div><dt>Notes</dt><dd>{formatMachineNotes(machine)}</dd></div>
@@ -154,4 +155,14 @@ function groupProcessesByGpu(processes: GpuProcess[]): Array<[number, GpuProcess
 function formatMachineNotes(machine: MachineWithLatest): string {
   const notes = machine.activeGpuNotes ?? [];
   return notes.length === 0 ? "-" : notes.map((note) => note.note).join("; ");
+}
+
+function formatNetRates(latest?: ProbeResult): string {
+  const rx = latest?.netRxBps;
+  const tx = latest?.netTxBps;
+  if ((rx === null || rx === undefined) && (tx === null || tx === undefined)) {
+    return "-";
+  }
+  const rate = (bps: number | null | undefined) => (bps === null || bps === undefined ? "-" : `${((bps * 8) / 1_000_000).toFixed(1)} Mbps`);
+  return `↓ ${rate(rx)}  ↑ ${rate(tx)}`;
 }

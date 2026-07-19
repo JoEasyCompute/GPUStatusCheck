@@ -86,6 +86,8 @@ class ProbeResult:
     gpu_jobs: str = ""
     gpu_power_w: str = ""
     gpu_avg_temp_c: str = ""
+    net_rx_bps: str = ""
+    net_tx_bps: str = ""
     bus_off_suspected: bool = False
     bus_off_reason: str = ""
     nvidia_smi_output: str = ""
@@ -565,6 +567,8 @@ def _run_ssh_probe_as(
     result.gpu_jobs = gpu_jobs or ""
     result.gpu_power_w = gpu_power_w or ""
     result.gpu_avg_temp_c = gpu_avg_temp_c or ""
+    result.net_rx_bps = _extract_scalar(stdout, "NET_RX_BPS") or ""
+    result.net_tx_bps = _extract_scalar(stdout, "NET_TX_BPS") or ""
     result.nvidia_smi_output = _extract_block(stdout, "NVIDIA_SMI_OUTPUT")
     result.nvidia_smi_error = _extract_block(stdout, "NVIDIA_SMI_ERROR")
     result.kernel_hits = _extract_block(stdout, "KERNEL_HITS")

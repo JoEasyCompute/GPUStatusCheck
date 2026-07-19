@@ -17,6 +17,8 @@ export type ParsedProbe = {
   gpuJobs: string;
   gpuPowerW: string;
   gpuAvgTempC: string;
+  netRxBps: number | null;
+  netTxBps: number | null;
   busOffSuspected: boolean;
   nvidiaSmiOutput: string;
   nvidiaSmiError: string;
@@ -53,6 +55,8 @@ export function parseProbeOutput(stdout: string, processArgsMaxChars: number): P
     gpuJobs: normalizeGpuJobs(parsedGpuJobs, parsedGpuCount, busOffSuspected),
     gpuPowerW: scalar(stdout, "GPU_POWER_W") ?? "",
     gpuAvgTempC: scalar(stdout, "GPU_AVG_TEMP_C") ?? "",
+    netRxBps: numericScalar(stdout, "NET_RX_BPS"),
+    netTxBps: numericScalar(stdout, "NET_TX_BPS"),
     busOffSuspected,
     nvidiaSmiOutput: block(stdout, "NVIDIA_SMI_OUTPUT"),
     nvidiaSmiError: block(stdout, "NVIDIA_SMI_ERROR"),
@@ -227,6 +231,8 @@ async function runProbeAs(machine: Machine, options: RunProbeOptions, user: stri
       gpuJobs: parsed.gpuJobs,
       gpuPowerW: parsed.gpuPowerW,
       gpuAvgTempC: parsed.gpuAvgTempC,
+      netRxBps: parsed.netRxBps,
+      netTxBps: parsed.netTxBps,
       busOffSuspected: parsed.busOffSuspected,
       busOffReason: reasons.join("; "),
       nvidiaSmiOutput: parsed.nvidiaSmiOutput,
@@ -306,6 +312,15 @@ function block(text: string, key: string): string {
     }
   }
   return output.join("\n").trim();
+}
+
+function numericScalar(text: string, key: string): number | null {
+  const value = scalar(text, key);
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function numericOrNull(value: string | undefined): number | null {

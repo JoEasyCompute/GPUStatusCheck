@@ -109,6 +109,50 @@ export function buildGpuMetricSeries(
   };
 }
 
+export type NetworkChartSeries = {
+  rx: PowerChartPoint[];
+  tx: PowerChartPoint[];
+  timeRange?: {
+    min: number;
+    max: number;
+  };
+};
+
+/** Network in/out over time, converted from bytes/sec to Mbps. */
+export function buildNetworkChartSeries(history: ProbeResult[]): NetworkChartSeries {
+  const rx: PowerChartPoint[] = [];
+  const tx: PowerChartPoint[] = [];
+  let minTime = Number.POSITIVE_INFINITY;
+  let maxTime = Number.NEGATIVE_INFINITY;
+
+  const chronologicalHistory = [...history].sort((a, b) => parseTime(a.checkedAt) - parseTime(b.checkedAt));
+  for (const entry of chronologicalHistory) {
+    const timestamp = parseTime(entry.checkedAt);
+    if (!Number.isFinite(timestamp)) {
+      continue;
+    }
+    minTime = Math.min(minTime, timestamp);
+    maxTime = Math.max(maxTime, timestamp);
+    const label = new Date(timestamp).toLocaleString();
+    if (entry.netRxBps !== null && entry.netRxBps !== undefined && Number.isFinite(entry.netRxBps)) {
+      rx.push({ timestamp, label, value: bpsToMbps(entry.netRxBps) });
+    }
+    if (entry.netTxBps !== null && entry.netTxBps !== undefined && Number.isFinite(entry.netTxBps)) {
+      tx.push({ timestamp, label, value: bpsToMbps(entry.netTxBps) });
+    }
+  }
+
+  return {
+    rx,
+    tx,
+    timeRange: Number.isFinite(minTime) && Number.isFinite(maxTime) ? { min: minTime, max: maxTime } : undefined,
+  };
+}
+
+export function bpsToMbps(bytesPerSecond: number): number {
+  return Number(((bytesPerSecond * 8) / 1_000_000).toFixed(2));
+}
+
 function parseTime(value: string | undefined): number {
   return value ? Date.parse(value) : Number.NaN;
 }

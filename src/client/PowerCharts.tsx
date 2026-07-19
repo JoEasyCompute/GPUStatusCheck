@@ -1,15 +1,16 @@
 import { useState } from "react";
 import type { ProbeResult } from "../shared/types";
 import { chartColors, LineChart } from "./LineChart";
-import { buildGpuMetricSeries, buildPowerChartSeries } from "./powerChartData";
+import { buildGpuMetricSeries, buildNetworkChartSeries, buildPowerChartSeries } from "./powerChartData";
 import { useTimeWindow } from "./useTimeWindow";
 
-type MetricTab = "power" | "temp" | "util";
+type MetricTab = "power" | "temp" | "util" | "network";
 
 const tabs: Array<{ id: MetricTab; label: string }> = [
   { id: "power", label: "Power" },
   { id: "temp", label: "Temperature" },
   { id: "util", label: "Utilization" },
+  { id: "network", label: "Network" },
 ];
 
 export function GpuCharts({ history }: { history: ProbeResult[] }) {
@@ -81,6 +82,10 @@ export function GpuCharts({ history }: { history: ProbeResult[] }) {
         />
       ) : null}
 
+      {tab === "network" ? (
+        <NetworkChart history={history} chartProps={chartProps} />
+      ) : null}
+
       {tab === "util" ? (
         <LineChart
           ariaLabel="Per GPU utilization over time"
@@ -96,5 +101,27 @@ export function GpuCharts({ history }: { history: ProbeResult[] }) {
         />
       ) : null}
     </div>
+  );
+}
+
+function NetworkChart({
+  history,
+  chartProps,
+}: {
+  history: ProbeResult[];
+  chartProps: Omit<Parameters<typeof LineChart>[0], "ariaLabel" | "emptyText" | "lines" | "unit">;
+}) {
+  const series = buildNetworkChartSeries(history);
+  return (
+    <LineChart
+      ariaLabel="Network traffic in and out over time"
+      emptyText="No network traffic history recorded yet."
+      lines={[
+        { label: "In", color: chartColors[0], points: series.rx },
+        { label: "Out", color: chartColors[1], points: series.tx },
+      ]}
+      unit="Mbps"
+      {...chartProps}
+    />
   );
 }

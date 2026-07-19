@@ -86,6 +86,35 @@ if [ "$gpu_count" -gt 0 ] 2>/dev/null && command -v nvidia-smi >/dev/null 2>&1; 
     fi
 fi
 
+# Network throughput: two /proc/net/dev samples one second apart, summing
+# physical interfaces (en*/eth*/ib*/wl*) so loopback, docker bridges, veth
+# pairs, and bond masters do not double-count traffic.
+net_rx_bps=""
+net_tx_bps=""
+if [ -r /proc/net/dev ]; then
+    net_sample1=$(cat /proc/net/dev 2>/dev/null)
+    sleep 1
+    net_sample2=$(cat /proc/net/dev 2>/dev/null)
+    net_rates=$(printf '%s\n=====SPLIT=====\n%s\n' "$net_sample1" "$net_sample2" | awk '
+        /^=====SPLIT=====$/ { second = 1; next }
+        {
+            ci = index($0, ":")
+            if (ci == 0) next
+            name = substr($0, 1, ci - 1)
+            gsub(/[ \t]/, "", name)
+            if (name !~ /^(en|eth|ib|wl)/) next
+            split(substr($0, ci + 1), f, " ")
+            if (second) { rx2 += f[1]; tx2 += f[9]; seen2 = 1 } else { rx1 += f[1]; tx1 += f[9]; seen1 = 1 }
+        }
+        END {
+            if (seen1 && seen2 && rx2 >= rx1) printf "%.0f", rx2 - rx1
+            printf "|"
+            if (seen1 && seen2 && tx2 >= tx1) printf "%.0f", tx2 - tx1
+        }')
+    net_rx_bps=${net_rates%%|*}
+    net_tx_bps=${net_rates#*|}
+fi
+
 kernel_log=""
 if [ "$check_logs" = "1" ]; then
     if command -v journalctl >/dev/null 2>&1; then
@@ -110,6 +139,8 @@ echo "GPU_TYPE=$gpu_type"
 echo "GPU_JOBS=$gpu_jobs"
 echo "GPU_POWER_W=$gpu_power_w"
 echo "GPU_AVG_TEMP_C=$gpu_avg_temp_c"
+echo "NET_RX_BPS=$net_rx_bps"
+echo "NET_TX_BPS=$net_tx_bps"
 if [ -n "$kernel_hits" ]; then echo "BUS_OFF=1"; else echo "BUS_OFF=0"; fi
 
 printf 'NVIDIA_SMI_OUTPUT<<__GPUCHECK_EOF__\n'

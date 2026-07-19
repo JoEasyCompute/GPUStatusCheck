@@ -302,6 +302,9 @@ function formatValue(value: number): string {
 }
 
 function formatAxisValue(value: number): string {
+  if (value > 0 && value < 10) {
+    return value.toFixed(1);
+  }
   return String(Math.round(value));
 }
 
