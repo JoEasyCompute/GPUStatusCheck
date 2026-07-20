@@ -20,6 +20,7 @@ export function GpuJobPills({ latest }: { latest?: ProbeResult }) {
             {gpuIndex}
             <span className="gpu-tooltip" role="tooltip">
               <strong>GPU {gpuIndex}</strong>
+              <span>UUID: {metric?.uuid || "-"}</span>
               <span>PCIe: {metric?.pciBusId || "-"}</span>
               <span>Status: {pillStatusLabel(state)}</span>
               <span>GPU util: {formatNullable(metric?.gpuUtil, "%")}</span>

@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import type { FleetHistoryPoint, GpuDownNote, GpuMetric, GpuProcess, GroupHistoryPoint, Machine, MachineWithLatest, PollRun, ProbeResult, Summary } from "../shared/types";
+import type { FleetHistoryPoint, GpuDownNote, GpuIdentity, GpuMetric, GpuProcess, GpuSighting, GroupHistoryPoint, Machine, MachineWithLatest, PollRun, ProbeResult, Summary } from "../shared/types";
 
 type Sqlite = Database.Database;
 
@@ -108,6 +108,27 @@ export function createDatabase(dbPath: string) {
         FOREIGN KEY(probe_result_id) REFERENCES probe_results(id)
       );
 
+      CREATE TABLE IF NOT EXISTS gpus (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid TEXT NOT NULL UNIQUE,
+        gpu_type TEXT NOT NULL DEFAULT '',
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        last_machine_id INTEGER,
+        last_gpu_index INTEGER,
+        last_owner TEXT NOT NULL DEFAULT ''
+      );
+
+      CREATE TABLE IF NOT EXISTS gpu_sightings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        gpu_uuid TEXT NOT NULL,
+        machine_id INTEGER NOT NULL,
+        gpu_index INTEGER NOT NULL,
+        owner TEXT NOT NULL DEFAULT '',
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS alert_states (
         machine_name TEXT PRIMARY KEY,
         status TEXT NOT NULL,
@@ -156,6 +177,15 @@ export function createDatabase(dbPath: string) {
     ensureColumn(db, "gpu_metrics", "power_limit_w", "REAL");
     ensureColumn(db, "gpu_metrics", "graphics_clock_mhz", "INTEGER");
     ensureColumn(db, "gpu_metrics", "memory_clock_mhz", "INTEGER");
+    ensureColumn(db, "gpu_metrics", "uuid", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(db, "gpu_processes", "gpu_uuid", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(db, "gpu_processes", "owner", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(db, "gpu_down_events", "gpu_uuid", "TEXT NOT NULL DEFAULT ''");
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_gpu_metrics_uuid ON gpu_metrics(uuid, checked_at);
+      CREATE INDEX IF NOT EXISTS idx_gpu_sightings_uuid ON gpu_sightings(gpu_uuid, last_seen_at);
+      CREATE INDEX IF NOT EXISTS idx_gpu_sightings_machine ON gpu_sightings(machine_id, gpu_index);
+    `);
   }
 
   function upsertMachine(machine: Machine): Machine {
@@ -252,13 +282,25 @@ export function createDatabase(dbPath: string) {
       durationMs: result.durationMs ?? null,
     });
     const probeResultId = Number(info.lastInsertRowid);
+    const owner = (result.owner ?? "").trim();
+    const uuidByIndex = new Map<number, string>();
+    for (const metric of result.gpuMetrics ?? []) {
+      if (metric.uuid) {
+        uuidByIndex.set(metric.gpuIndex, metric.uuid);
+      }
+    }
     for (const process of result.processes ?? []) {
-      insertProcessRow(db, pollRunId, machineId, probeResultId, checkedAt, process);
+      insertProcessRow(db, pollRunId, machineId, probeResultId, checkedAt, {
+        ...process,
+        owner: process.owner ?? owner,
+        gpuUuid: process.gpuUuid ?? uuidByIndex.get(process.gpuIndex) ?? "",
+      });
     }
     for (const metric of result.gpuMetrics ?? []) {
       insertMetricRow(db, pollRunId, machineId, probeResultId, checkedAt, metric);
     }
-    syncGpuDownEvents(db, machineId, checkedAt, result);
+    recordGpuSightings(db, machineId, checkedAt, result, uuidByIndex);
+    syncGpuDownEvents(db, machineId, checkedAt, result, uuidByIndex);
     return probeResultId;
   }
 
@@ -438,6 +480,63 @@ export function createDatabase(dbPath: string) {
     }));
   }
 
+  function listGpus(): GpuIdentity[] {
+    const rows = db.prepare(`
+      SELECT g.uuid, g.gpu_type, g.first_seen_at, g.last_seen_at, g.last_machine_id, g.last_gpu_index, g.last_owner,
+             m.name AS last_machine_name,
+             (SELECT COUNT(*) FROM gpu_sightings s WHERE s.gpu_uuid = g.uuid) AS sighting_count
+      FROM gpus g
+      LEFT JOIN machines m ON m.id = g.last_machine_id
+      ORDER BY g.last_seen_at DESC, g.uuid ASC
+    `).all() as Array<GpuIdentityRow & { last_machine_name: string | null; sighting_count: number }>;
+    return rows.map((row) => ({
+      ...rowToGpuIdentity(row),
+      lastMachineName: row.last_machine_name ?? undefined,
+      sightingCount: row.sighting_count,
+    }));
+  }
+
+  function getGpu(uuid: string, metricsSince?: string, metricsLimit = 2000): { gpu: GpuIdentity; sightings: GpuSighting[]; metrics: GpuMetric[] } | undefined {
+    const row = db.prepare(`
+      SELECT g.uuid, g.gpu_type, g.first_seen_at, g.last_seen_at, g.last_machine_id, g.last_gpu_index, g.last_owner,
+             m.name AS last_machine_name
+      FROM gpus g
+      LEFT JOIN machines m ON m.id = g.last_machine_id
+      WHERE g.uuid = ?
+    `).get(uuid) as (GpuIdentityRow & { last_machine_name: string | null }) | undefined;
+    if (!row) {
+      return undefined;
+    }
+    const sightings = db.prepare(`
+      SELECT s.id, s.gpu_uuid, s.machine_id, s.gpu_index, s.owner, s.first_seen_at, s.last_seen_at,
+             m.name AS machine_name
+      FROM gpu_sightings s
+      LEFT JOIN machines m ON m.id = s.machine_id
+      WHERE s.gpu_uuid = ?
+      ORDER BY s.last_seen_at DESC, s.id DESC
+    `).all(uuid) as Array<{
+      id: number; gpu_uuid: string; machine_id: number; gpu_index: number; owner: string;
+      first_seen_at: string; last_seen_at: string; machine_name: string | null;
+    }>;
+    const metrics = metricsSince
+      ? db.prepare("SELECT * FROM gpu_metrics WHERE uuid = ? AND checked_at >= ? ORDER BY checked_at DESC LIMIT ?").all(uuid, metricsSince, metricsLimit) as MetricRow[]
+      : db.prepare("SELECT * FROM gpu_metrics WHERE uuid = ? ORDER BY checked_at DESC LIMIT ?").all(uuid, metricsLimit) as MetricRow[];
+    return {
+      gpu: { ...rowToGpuIdentity(row), lastMachineName: row.last_machine_name ?? undefined, sightingCount: sightings.length },
+      sightings: sightings.map((sighting) => ({
+        id: sighting.id,
+        gpuUuid: sighting.gpu_uuid,
+        machineId: sighting.machine_id,
+        machineName: sighting.machine_name ?? undefined,
+        gpuIndex: sighting.gpu_index,
+        owner: sighting.owner,
+        firstSeenAt: sighting.first_seen_at,
+        lastSeenAt: sighting.last_seen_at,
+      })),
+      metrics: metrics.map(rowToMetric),
+    };
+  }
+
   function getAlertStates(): Record<string, string> {
     const rows = db.prepare("SELECT machine_name, status FROM alert_states").all() as Array<{ machine_name: string; status: string }>;
     return Object.fromEntries(rows.map((row) => [row.machine_name, row.status]));
@@ -502,6 +601,8 @@ export function createDatabase(dbPath: string) {
     raiseExpectedGpuCount,
     listFleetHistory,
     listGroupHistory,
+    listGpus,
+    getGpu,
     pruneHistory,
     close,
   };
@@ -510,11 +611,11 @@ export function createDatabase(dbPath: string) {
 function insertMetricRow(db: Sqlite, pollRunId: number, machineId: number, probeResultId: number, checkedAt: string, metric: GpuMetric): void {
   db.prepare(`
     INSERT INTO gpu_metrics (
-      probe_result_id, machine_id, poll_run_id, checked_at, gpu_index, pci_bus_id,
+      probe_result_id, machine_id, poll_run_id, checked_at, gpu_index, uuid, pci_bus_id,
       gpu_util, mem_util, temp_c, power_w, power_limit_w, graphics_clock_mhz, memory_clock_mhz
     )
     VALUES (
-      @probeResultId, @machineId, @pollRunId, @checkedAt, @gpuIndex, @pciBusId,
+      @probeResultId, @machineId, @pollRunId, @checkedAt, @gpuIndex, @uuid, @pciBusId,
       @gpuUtil, @memUtil, @tempC, @powerW, @powerLimitW, @graphicsClockMhz, @memoryClockMhz
     )
   `).run({
@@ -523,6 +624,7 @@ function insertMetricRow(db: Sqlite, pollRunId: number, machineId: number, probe
     pollRunId,
     checkedAt,
     gpuIndex: metric.gpuIndex,
+    uuid: metric.uuid ?? "",
     pciBusId: metric.pciBusId ?? "",
     gpuUtil: metric.gpuUtil ?? null,
     memUtil: metric.memUtil ?? null,
@@ -537,11 +639,11 @@ function insertMetricRow(db: Sqlite, pollRunId: number, machineId: number, probe
 function insertProcessRow(db: Sqlite, pollRunId: number, machineId: number, probeResultId: number, checkedAt: string, process: GpuProcess): void {
   db.prepare(`
     INSERT INTO gpu_processes (
-      probe_result_id, machine_id, poll_run_id, checked_at, gpu_index, pid, process_type,
+      probe_result_id, machine_id, poll_run_id, checked_at, gpu_index, gpu_uuid, owner, pid, process_type,
       sm_util, mem_util, enc_util, dec_util, command, user, elapsed, process_name, command_line
     )
     VALUES (
-      @probeResultId, @machineId, @pollRunId, @checkedAt, @gpuIndex, @pid, @processType,
+      @probeResultId, @machineId, @pollRunId, @checkedAt, @gpuIndex, @gpuUuid, @owner, @pid, @processType,
       @smUtil, @memUtil, @encUtil, @decUtil, @command, @user, @elapsed, @processName, @commandLine
     )
   `).run({
@@ -550,6 +652,8 @@ function insertProcessRow(db: Sqlite, pollRunId: number, machineId: number, prob
     pollRunId,
     checkedAt,
     gpuIndex: process.gpuIndex,
+    gpuUuid: process.gpuUuid ?? "",
+    owner: process.owner ?? "",
     pid: process.pid,
     processType: process.processType ?? "",
     smUtil: process.smUtil ?? null,
@@ -639,6 +743,8 @@ type ProcessRow = {
   poll_run_id: number;
   checked_at: string;
   gpu_index: number;
+  gpu_uuid: string;
+  owner: string;
   pid: number;
   process_type: string;
   sm_util: number | null;
@@ -659,6 +765,7 @@ type MetricRow = {
   poll_run_id: number;
   checked_at: string;
   gpu_index: number;
+  uuid: string;
   pci_bus_id: string;
   gpu_util: number | null;
   mem_util: number | null;
@@ -752,7 +859,49 @@ function rowToMachineWithLatest(row: LatestMachineRow, db: Sqlite): MachineWithL
   return machine;
 }
 
-function syncGpuDownEvents(db: Sqlite, machineId: number, checkedAt: string, result: ProbeResult): void {
+/**
+ * Maintains the uuid-keyed GPU identity table and its sighting segments.
+ * A sighting row is one continuous stretch of (machine, slot, owner); the
+ * latest segment is extended in place, and any change — card moved, slot
+ * re-enumerated, machine re-assigned to another tenant — starts a new one.
+ */
+function recordGpuSightings(db: Sqlite, machineId: number, checkedAt: string, result: ProbeResult, uuidByIndex: Map<number, string>): void {
+  if (uuidByIndex.size === 0) {
+    return;
+  }
+  const owner = (result.owner ?? "").trim();
+  const gpuType = result.gpuType ?? "";
+  const upsertGpu = db.prepare(`
+    INSERT INTO gpus (uuid, gpu_type, first_seen_at, last_seen_at, last_machine_id, last_gpu_index, last_owner)
+    VALUES (@uuid, @gpuType, @checkedAt, @checkedAt, @machineId, @gpuIndex, @owner)
+    ON CONFLICT(uuid) DO UPDATE SET
+      gpu_type = CASE WHEN excluded.gpu_type != '' THEN excluded.gpu_type ELSE gpus.gpu_type END,
+      last_seen_at = excluded.last_seen_at,
+      last_machine_id = excluded.last_machine_id,
+      last_gpu_index = excluded.last_gpu_index,
+      last_owner = excluded.last_owner
+  `);
+  const latestSighting = db.prepare(`
+    SELECT id, machine_id, gpu_index, owner FROM gpu_sightings
+    WHERE gpu_uuid = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1
+  `);
+  const touchSighting = db.prepare("UPDATE gpu_sightings SET last_seen_at = ? WHERE id = ?");
+  const insertSighting = db.prepare(`
+    INSERT INTO gpu_sightings (gpu_uuid, machine_id, gpu_index, owner, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  for (const [gpuIndex, uuid] of uuidByIndex) {
+    upsertGpu.run({ uuid, gpuType, checkedAt, machineId, gpuIndex, owner });
+    const latest = latestSighting.get(uuid) as { id: number; machine_id: number; gpu_index: number; owner: string } | undefined;
+    if (latest && latest.machine_id === machineId && latest.gpu_index === gpuIndex && latest.owner === owner) {
+      touchSighting.run(checkedAt, latest.id);
+    } else {
+      insertSighting.run(uuid, machineId, gpuIndex, owner, checkedAt, checkedAt);
+    }
+  }
+}
+
+function syncGpuDownEvents(db: Sqlite, machineId: number, checkedAt: string, result: ProbeResult, uuidByIndex: Map<number, string> = new Map()): void {
   if (!result.sshOk) {
     return;
   }
@@ -766,9 +915,9 @@ function syncGpuDownEvents(db: Sqlite, machineId: number, checkedAt: string, res
       continue;
     }
     db.prepare(`
-      INSERT INTO gpu_down_events (machine_id, gpu_index, down_since, recovered_at, created_at, updated_at)
-      VALUES (?, ?, ?, NULL, ?, ?)
-    `).run(machineId, gpuIndex, checkedAt, checkedAt, checkedAt);
+      INSERT INTO gpu_down_events (machine_id, gpu_index, gpu_uuid, down_since, recovered_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, NULL, ?, ?)
+    `).run(machineId, gpuIndex, uuidByIndex.get(gpuIndex) ?? lastKnownGpuUuid(db, machineId, gpuIndex), checkedAt, checkedAt, checkedAt);
   }
 
   for (const row of activeRows) {
@@ -777,6 +926,17 @@ function syncGpuDownEvents(db: Sqlite, machineId: number, checkedAt: string, res
     }
     db.prepare("UPDATE gpu_down_events SET recovered_at = ?, updated_at = ? WHERE id = ?").run(checkedAt, checkedAt, row.id);
   }
+}
+
+/** A GPU that fell off the bus is missing from current telemetry, so down
+ * events resolve the card via the most recent sighting in that slot. */
+function lastKnownGpuUuid(db: Sqlite, machineId: number, gpuIndex: number): string {
+  const row = db.prepare(`
+    SELECT gpu_uuid FROM gpu_sightings
+    WHERE machine_id = ? AND gpu_index = ?
+    ORDER BY last_seen_at DESC, id DESC LIMIT 1
+  `).get(machineId, gpuIndex) as { gpu_uuid: string } | undefined;
+  return row?.gpu_uuid ?? "";
 }
 
 function gpuDownIndexes(gpuJobs: string): Set<number> {
@@ -853,6 +1013,8 @@ function rowToProcess(row: ProcessRow): GpuProcess {
     pollRunId: row.poll_run_id,
     checkedAt: row.checked_at,
     gpuIndex: row.gpu_index,
+    gpuUuid: row.gpu_uuid,
+    owner: row.owner,
     pid: row.pid,
     processType: row.process_type,
     smUtil: row.sm_util,
@@ -875,6 +1037,7 @@ function rowToMetric(row: MetricRow): GpuMetric {
     pollRunId: row.poll_run_id,
     checkedAt: row.checked_at,
     gpuIndex: row.gpu_index,
+    uuid: row.uuid,
     pciBusId: row.pci_bus_id,
     gpuUtil: row.gpu_util,
     memUtil: row.mem_util,
@@ -883,6 +1046,28 @@ function rowToMetric(row: MetricRow): GpuMetric {
     powerLimitW: row.power_limit_w,
     graphicsClockMhz: row.graphics_clock_mhz,
     memoryClockMhz: row.memory_clock_mhz,
+  };
+}
+
+type GpuIdentityRow = {
+  uuid: string;
+  gpu_type: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  last_machine_id: number | null;
+  last_gpu_index: number | null;
+  last_owner: string;
+};
+
+function rowToGpuIdentity(row: GpuIdentityRow): GpuIdentity {
+  return {
+    uuid: row.uuid,
+    gpuType: row.gpu_type,
+    firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at,
+    lastMachineId: row.last_machine_id,
+    lastGpuIndex: row.last_gpu_index,
+    lastOwner: row.last_owner,
   };
 }
 

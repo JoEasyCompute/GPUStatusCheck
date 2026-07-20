@@ -131,6 +131,18 @@ export function buildApp(options: BuildAppOptions) {
     const since = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
     return options.db.listGroupHistory(by, (request.query.key ?? "").trim(), since);
   });
+  app.get("/api/gpus", async () => options.db.listGpus());
+  app.get<{ Params: { uuid: string }; Querystring: { hours?: string } }>("/api/gpus/:uuid", async (request, reply) => {
+    const hours = Number(request.query.hours);
+    const since = Number.isFinite(hours) && hours > 0
+      ? new Date(Date.now() - Math.min(hours, 24 * 30) * 60 * 60 * 1000).toISOString()
+      : undefined;
+    const gpu = options.db.getGpu(request.params.uuid, since);
+    if (!gpu) {
+      return reply.code(404).send({ error: "gpu not found" });
+    }
+    return gpu;
+  });
   app.get<{ Querystring: { limit?: string } }>("/api/poll-runs", async (request) =>
     options.db.listPollRuns(parseLimit(request.query.limit, 50)),
   );

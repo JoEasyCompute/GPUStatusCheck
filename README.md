@@ -158,6 +158,11 @@ SQLite, and serves a React dashboard with:
   over the last 24 hours with pinch-to-zoom and drag-to-pan, GPU process
   history, and probe history; clicking the IP copies a ready-to-use SSH
   command
+- GPU lifecycle tracking by UUID: every telemetry row records the GPU's UUID,
+  an identity table follows each physical card across machines/slots/tenants
+  (sighting segments), per-GPU job rows carry the owner renting the GPU at
+  probe time, and down events resolve the card via its last known slot;
+  query with `GET /api/gpus` and `GET /api/gpus/<uuid>?hours=N`
 - Built-in Telegram alerting, maintenance mode, and a health/watchdog endpoint
   (see sections below)
 

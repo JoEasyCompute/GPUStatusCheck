@@ -43,6 +43,8 @@ export type GpuProcess = {
   pollRunId?: number;
   checkedAt?: string;
   gpuIndex: number;
+  gpuUuid?: string;
+  owner?: string;
   pid: number;
   processType?: string;
   smUtil?: number | null;
@@ -63,6 +65,7 @@ export type GpuMetric = {
   pollRunId?: number;
   checkedAt?: string;
   gpuIndex: number;
+  uuid?: string;
   pciBusId?: string;
   gpuUtil?: number | null;
   memUtil?: number | null;
@@ -71,6 +74,29 @@ export type GpuMetric = {
   powerLimitW?: number | null;
   graphicsClockMhz?: number | null;
   memoryClockMhz?: number | null;
+};
+
+export type GpuIdentity = {
+  uuid: string;
+  gpuType: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastMachineId: number | null;
+  lastMachineName?: string;
+  lastGpuIndex: number | null;
+  lastOwner: string;
+  sightingCount?: number;
+};
+
+export type GpuSighting = {
+  id?: number;
+  gpuUuid: string;
+  machineId: number;
+  machineName?: string;
+  gpuIndex: number;
+  owner: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
 };
 
 export type GpuDownNote = {

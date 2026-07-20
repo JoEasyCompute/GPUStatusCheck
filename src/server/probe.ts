@@ -151,6 +151,7 @@ export function parseGpuMetrics(metricsOutput: string): GpuMetric[] {
       powerLimitW: numericOrNull(parts[6]),
       graphicsClockMhz: numericOrNull(parts[7]),
       memoryClockMhz: numericOrNull(parts[8]),
+      uuid: cleanToken(parts[9]),
     });
   }
   return metrics;

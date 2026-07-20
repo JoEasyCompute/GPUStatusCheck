@@ -53,6 +53,7 @@ describe("api", () => {
           gpuPowerW: "250.5",
           gpuAvgTempC: "61.0",
           processes: [{ gpuIndex: 0, pid: 123, commandLine: "python train.py" }],
+          gpuMetrics: [{ gpuIndex: 0, uuid: "GPU-feed1111-2222-3333-4444-555566667777", gpuUtil: 77, powerW: 250.5 }],
         };
       },
     });
@@ -185,6 +186,26 @@ describe("api", () => {
 
     const emptyGroup = await app.inject({ method: "GET", url: "/api/group-history?by=owner&key=nobody" });
     expect(emptyGroup.json()).toEqual([]);
+
+    // Both polls saw the same GPU uuid, first in alpha then in beta, so the
+    // identity follows the card and shows two sighting segments.
+    const gpus = await app.inject({ method: "GET", url: "/api/gpus" });
+    expect(gpus.statusCode).toBe(200);
+    expect(gpus.json()).toHaveLength(1);
+    expect(gpus.json()[0]).toMatchObject({
+      uuid: "GPU-feed1111-2222-3333-4444-555566667777",
+      lastMachineName: "beta",
+      lastGpuIndex: 0,
+      sightingCount: 2,
+    });
+
+    const gpuDetail = await app.inject({ method: "GET", url: "/api/gpus/GPU-feed1111-2222-3333-4444-555566667777?hours=24" });
+    expect(gpuDetail.statusCode).toBe(200);
+    expect(gpuDetail.json().sightings).toHaveLength(2);
+    expect(gpuDetail.json().metrics.length).toBeGreaterThanOrEqual(2);
+
+    const missingGpu = await app.inject({ method: "GET", url: "/api/gpus/GPU-nope" });
+    expect(missingGpu.statusCode).toBe(404);
 
     await app.close();
     db.close();

@@ -65,7 +65,7 @@ gpu_power_w=""
 gpu_avg_temp_c=""
 telemetry_out=""
 if [ "$gpu_count" -gt 0 ] 2>/dev/null && command -v nvidia-smi >/dev/null 2>&1; then
-    if telemetry_out=$(nvidia-smi --query-gpu=index,pci.bus_id,utilization.gpu,utilization.memory,temperature.gpu,power.draw,power.limit,clocks.current.graphics,clocks.current.memory --format=csv,noheader,nounits 2>/dev/null); then
+    if telemetry_out=$(nvidia-smi --query-gpu=index,pci.bus_id,utilization.gpu,utilization.memory,temperature.gpu,power.draw,power.limit,clocks.current.graphics,clocks.current.memory,uuid --format=csv,noheader,nounits 2>/dev/null); then
         telemetry=$(printf '%s\n' "$telemetry_out" | awk -F',' '
             function trim(value) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); return value }
             {

@@ -218,6 +218,104 @@ describe("database", () => {
     db.close();
   });
 
+  it("tracks a GPU by uuid across machines with sighting segments and owner-stamped jobs", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-uuid-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+
+    const uuid = "GPU-aaaa1111-2222-3333-4444-555566667777";
+    const alpha = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22, owner: "iota" });
+    const beta = db.upsertMachine({ name: "beta", ip: "10.0.0.2", sshHost: "10.0.0.2", sshPort: 22, owner: "mining" });
+
+    // Card first lives in alpha (tenant iota), running a job.
+    const run1 = db.createPollRun(2);
+    db.insertProbeResult(run1, alpha.id!, {
+      name: "alpha", ip: "10.0.0.1", owner: "iota", sshOk: true, status: "ok",
+      gpuCount: 1, gpuType: "4090", gpuJobs: "D",
+      gpuMetrics: [{ gpuIndex: 0, uuid, gpuUtil: 95, powerW: 300 }],
+      processes: [{ gpuIndex: 0, pid: 42, commandLine: "python train.py" }],
+    });
+    db.finishPollRun(run1);
+
+    // Same slot next poll: the sighting segment extends instead of duplicating.
+    const run2 = db.createPollRun(2);
+    db.insertProbeResult(run2, alpha.id!, {
+      name: "alpha", ip: "10.0.0.1", owner: "iota", sshOk: true, status: "ok",
+      gpuCount: 1, gpuType: "4090", gpuJobs: "x",
+      gpuMetrics: [{ gpuIndex: 0, uuid, gpuUtil: 0, powerW: 20 }],
+    });
+    db.finishPollRun(run2);
+
+    // Card is reseated into beta slot 3 under another tenant.
+    const run3 = db.createPollRun(2);
+    db.insertProbeResult(run3, beta.id!, {
+      name: "beta", ip: "10.0.0.2", owner: "mining", sshOk: true, status: "ok",
+      gpuCount: 4, gpuType: "4090", gpuJobs: "xxxD",
+      gpuMetrics: [{ gpuIndex: 3, uuid, gpuUtil: 50, powerW: 250 }],
+    });
+    db.finishPollRun(run3);
+
+    const gpus = db.listGpus();
+    expect(gpus).toHaveLength(1);
+    expect(gpus[0]).toMatchObject({
+      uuid,
+      gpuType: "4090",
+      lastMachineId: beta.id,
+      lastMachineName: "beta",
+      lastGpuIndex: 3,
+      lastOwner: "mining",
+      sightingCount: 2,
+    });
+
+    const detail = db.getGpu(uuid)!;
+    expect(detail.sightings).toHaveLength(2);
+    expect(detail.sightings[0]).toMatchObject({ machineName: "beta", gpuIndex: 3, owner: "mining" });
+    expect(detail.sightings[1]).toMatchObject({ machineName: "alpha", gpuIndex: 0, owner: "iota" });
+    expect(detail.sightings[1].firstSeenAt <= detail.sightings[1].lastSeenAt).toBe(true);
+    // The card's metric history spans both machines.
+    expect(detail.metrics).toHaveLength(3);
+    expect(new Set(detail.metrics.map((metric) => metric.machineId))).toEqual(new Set([alpha.id, beta.id]));
+
+    // Jobs carry the tenant that was renting the GPU at probe time.
+    expect(db.listProcesses(alpha.id!)[0]).toMatchObject({ owner: "iota", gpuUuid: uuid });
+
+    expect(db.getGpu("GPU-nope")).toBeUndefined();
+
+    db.close();
+  });
+
+  it("stamps down events with the last known uuid for the slot", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-uuid-down-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+
+    const uuid = "GPU-cccc1111-2222-3333-4444-555566667777";
+    const machine = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22, owner: "iota" });
+
+    const healthyRun = db.createPollRun(1);
+    db.insertProbeResult(healthyRun, machine.id!, {
+      name: "alpha", ip: "10.0.0.1", owner: "iota", sshOk: true, status: "ok",
+      gpuCount: 2, gpuJobs: "xx",
+      gpuMetrics: [{ gpuIndex: 0, uuid }, { gpuIndex: 1, uuid: "GPU-dddd1111-2222-3333-4444-555566667777" }],
+    });
+    db.finishPollRun(healthyRun);
+
+    // GPU 0 falls off the bus: no telemetry for it, but the down event still
+    // resolves the physical card from its last sighting in that slot.
+    const downRun = db.createPollRun(1);
+    db.insertProbeResult(downRun, machine.id!, {
+      name: "alpha", ip: "10.0.0.1", owner: "iota", sshOk: true, status: "degraded",
+      gpuCount: 2, gpuJobs: "Ex",
+      gpuMetrics: [{ gpuIndex: 1, uuid: "GPU-dddd1111-2222-3333-4444-555566667777" }],
+    });
+    db.finishPollRun(downRun);
+
+    const downEvent = db.raw.prepare("SELECT gpu_uuid FROM gpu_down_events WHERE machine_id = ? AND gpu_index = 0 AND recovered_at IS NULL").get(machine.id) as { gpu_uuid: string };
+    expect(downEvent.gpu_uuid).toBe(uuid);
+
+    db.close();
+  });
+
   it("tracks active GPU down notes until a successful recovery probe clears them", () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-db-notes-"));
     const db = createDatabase(join(dir, "test.sqlite"));
