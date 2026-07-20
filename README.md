@@ -146,7 +146,9 @@ SQLite, and serves a React dashboard with:
 - Summary tiles (machine counts by status, total fleet power, average temp)
 - A collapsible fleet history panel (total power and status counts over 24h)
 - Two display modes — a sortable table and a card grid whose border color
-  shows machine status — with optional grouping by owner or location; group
+  shows machine status — with free-text search plus status and GPU-type
+  filters (type options carry live machine counts), and optional grouping
+  by owner or location; group
   headers are collapsible and summarize count, ok/degraded/ssh-failed, total
   and average power, and average temperature; a Charts button in each group
   header expands 24h group history charts (total power, average temperature,
