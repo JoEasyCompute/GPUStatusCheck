@@ -50,6 +50,7 @@ export function App() {
   const [history, setHistory] = useState<ProbeResult[]>([]);
   const [processes, setProcesses] = useState<GpuProcess[]>([]);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [gpuTypeFilter, setGpuTypeFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>(() => storedChoice("gpucheck.viewMode", ["table", "cards"], "table"));
   const [groupBy, setGroupBy] = useState<MachineGroupBy>(() => storedChoice("gpucheck.groupBy", ["none", "owner", "location"], "none"));
@@ -234,17 +235,29 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [selectedMachineId]);
 
+  const gpuTypeCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const machine of machines) {
+      const gpuType = machine.latest?.gpuType;
+      if (gpuType) {
+        counts.set(gpuType, (counts.get(gpuType) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [machines]);
+
   const filteredMachines = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return machines.filter((machine) => {
       const status = machine.latest?.status ?? "unknown";
       const statusMatches = statusFilter === "all" || status === statusFilter;
+      const gpuTypeMatches = gpuTypeFilter === "all" || (machine.latest?.gpuType ?? "") === gpuTypeFilter;
       const searchMatches = !needle || [machine.name, machine.ip, machine.platform, machine.owner, machine.location]
         .filter(Boolean)
         .some((value) => value!.toLowerCase().includes(needle));
-      return statusMatches && searchMatches;
+      return statusMatches && gpuTypeMatches && searchMatches;
     });
-  }, [machines, search, statusFilter]);
+  }, [machines, search, statusFilter, gpuTypeFilter]);
 
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId);
 
@@ -354,6 +367,12 @@ export function App() {
           <option value="ok">OK</option>
           <option value="degraded">Degraded</option>
           <option value="ssh_failed">SSH failed</option>
+        </select>
+        <select value={gpuTypeFilter} onChange={(event) => setGpuTypeFilter(event.target.value)} aria-label="Filter by GPU type">
+          <option value="all">All GPU types</option>
+          {gpuTypeCounts.map(([gpuType, count]) => (
+            <option key={gpuType} value={gpuType}>{gpuType} ({count})</option>
+          ))}
         </select>
         <div className="chart-tabs view-toggle" role="tablist" aria-label="Display mode">
           <button
