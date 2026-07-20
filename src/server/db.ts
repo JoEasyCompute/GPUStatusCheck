@@ -197,6 +197,7 @@ export function createDatabase(dbPath: string) {
     ensureColumn(db, "gpu_down_events", "gpu_uuid", "TEXT NOT NULL DEFAULT ''");
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_gpu_metrics_uuid ON gpu_metrics(uuid, checked_at);
+      CREATE INDEX IF NOT EXISTS idx_gpu_metrics_poll_run ON gpu_metrics(poll_run_id);
       CREATE INDEX IF NOT EXISTS idx_gpu_processes_uuid ON gpu_processes(gpu_uuid, checked_at);
       CREATE INDEX IF NOT EXISTS idx_gpu_sightings_uuid ON gpu_sightings(gpu_uuid, last_seen_at);
       CREATE INDEX IF NOT EXISTS idx_gpu_sightings_machine ON gpu_sightings(machine_id, gpu_index);
