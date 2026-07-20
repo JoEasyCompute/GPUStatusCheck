@@ -94,13 +94,19 @@ const MODEL_SUFFIXES = new Set(["ti", "super"]);
 
 export function normalizeGpuType(value: string): string {
   const parts = value.trim().split(/\s+/).filter(Boolean);
+  // "RTX 6000 Ada Generation" → "6000ADA": bare "6000" would be ambiguous
+  // (e.g. against A6000) and Ada-generation cards are a distinct product.
+  const adaSuffix = parts.some((part) => part.toLowerCase() === "ada") ? "ADA" : "";
   for (let i = parts.length - 1; i >= 0; i--) {
     const token = parts[i];
     if (!/\d/.test(token) || NON_MODEL_TOKEN.test(token)) {
       continue;
     }
     const next = parts[i + 1];
-    return next && MODEL_SUFFIXES.has(next.toLowerCase()) ? `${token} ${next}` : token;
+    if (next && MODEL_SUFFIXES.has(next.toLowerCase())) {
+      return `${token} ${next}${adaSuffix}`;
+    }
+    return `${token}${adaSuffix}`;
   }
   return parts.at(-1) ?? "";
 }

@@ -144,8 +144,13 @@ describe("probe parsing", () => {
 
 describe("normalizeGpuType", () => {
   it("extracts the model token instead of the trailing marketing word", () => {
-    expect(normalizeGpuType("NVIDIA RTX 4000 SFF Ada Generation")).toBe("4000");
-    expect(normalizeGpuType("NVIDIA RTX 2000 Ada Generation")).toBe("2000");
+    expect(normalizeGpuType("NVIDIA RTX 4000 SFF Ada Generation")).toBe("4000ADA");
+    expect(normalizeGpuType("NVIDIA RTX 2000 Ada Generation")).toBe("2000ADA");
+  });
+
+  it("labels Ada-generation cards with an ADA suffix to disambiguate from A-series", () => {
+    expect(normalizeGpuType("NVIDIA RTX 6000 Ada Generation")).toBe("6000ADA");
+    expect(normalizeGpuType("NVIDIA RTX A6000")).toBe("A6000");
   });
 
   it("keeps the last word for plain model names", () => {
