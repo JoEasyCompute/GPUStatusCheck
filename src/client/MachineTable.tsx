@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { MachineWithLatest } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
+import { GroupCharts } from "./GroupCharts";
 import { GroupStats } from "./GroupStats";
 import { buildMachineGroups, computeGroupStats, type MachineGroupBy } from "./machineGroups";
 import { sortMachines, type MachineSort, type MachineSortKey } from "./machineSort";
@@ -19,9 +20,22 @@ export function MachineTable({
 }) {
   const [sort, setSort] = useState<MachineSort>({ key: "name", direction: "asc" });
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [chartsOpen, setChartsOpen] = useState<Set<string>>(new Set());
   const toggleGroup = (label: string) => {
     const key = `${groupBy}:${label}`;
     setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+  const toggleCharts = (label: string) => {
+    const key = `${groupBy}:${label}`;
+    setChartsOpen((current) => {
       const next = new Set(current);
       if (next.has(key)) {
         next.delete(key);
@@ -77,6 +91,27 @@ export function MachineTable({
                     <span className="caret" aria-hidden="true">{collapsed.has(`${groupBy}:${group.label}`) ? "▸" : "▾"}</span>
                     {group.label || "Unassigned"}
                     <GroupStats stats={computeGroupStats(group.machines)} />
+                    <button
+                      type="button"
+                      className={`group-charts-toggle ${chartsOpen.has(`${groupBy}:${group.label}`) ? "active" : ""}`}
+                      title="Toggle group history charts"
+                      aria-expanded={chartsOpen.has(`${groupBy}:${group.label}`)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleCharts(group.label!);
+                      }}
+                    >
+                      Charts
+                    </button>
+                  </td>
+                </tr>
+              )]
+              : []),
+            ...(group.label !== undefined && chartsOpen.has(`${groupBy}:${group.label}`) && (groupBy === "owner" || groupBy === "location")
+              ? [(
+                <tr key={`group-charts-${group.label}`} className="group-charts-row">
+                  <td colSpan={11}>
+                    <GroupCharts groupBy={groupBy} label={group.label} />
                   </td>
                 </tr>
               )]

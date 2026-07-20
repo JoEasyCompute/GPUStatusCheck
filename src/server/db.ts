@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import type { FleetHistoryPoint, GpuDownNote, GpuMetric, GpuProcess, Machine, MachineWithLatest, PollRun, ProbeResult, Summary } from "../shared/types";
+import type { FleetHistoryPoint, GpuDownNote, GpuMetric, GpuProcess, GroupHistoryPoint, Machine, MachineWithLatest, PollRun, ProbeResult, Summary } from "../shared/types";
 
 type Sqlite = Database.Database;
 
@@ -378,6 +378,49 @@ export function createDatabase(dbPath: string) {
     }));
   }
 
+  function listGroupHistory(groupBy: "owner" | "location", key: string, since: string, limit = 2000): GroupHistoryPoint[] {
+    const column = groupBy === "owner" ? "owner" : "location";
+    // Labels in the UI come from buildMachineGroups, which trims CSV values.
+    const rows = db.prepare(`
+      SELECT p.id, p.started_at,
+             COUNT(r.id) AS machine_count,
+             SUM(r.gpu_power_w) AS total_power_w,
+             AVG(r.gpu_avg_temp_c) AS avg_temp_c,
+             SUM(r.net_rx_bps) AS net_rx_bps,
+             SUM(r.net_tx_bps) AS net_tx_bps,
+             (SELECT AVG(g.gpu_util) FROM gpu_metrics g
+                JOIN machines gm ON gm.id = g.machine_id
+              WHERE g.poll_run_id = p.id AND TRIM(gm.${column}) = @key) AS avg_gpu_util
+      FROM poll_runs p
+      JOIN probe_results r ON r.poll_run_id = p.id
+      JOIN machines m ON m.id = r.machine_id
+      WHERE p.status = 'complete' AND p.started_at >= @since AND TRIM(m.${column}) = @key
+      GROUP BY p.id
+      ORDER BY p.started_at ASC
+      LIMIT @limit
+    `).all({ key, since, limit }) as Array<{
+      id: number;
+      started_at: string;
+      machine_count: number;
+      total_power_w: number | null;
+      avg_temp_c: number | null;
+      net_rx_bps: number | null;
+      net_tx_bps: number | null;
+      avg_gpu_util: number | null;
+    }>;
+    const round = (value: number | null, digits = 1) => (value === null ? null : Number(value.toFixed(digits)));
+    return rows.map((row) => ({
+      pollRunId: row.id,
+      startedAt: row.started_at,
+      machineCount: row.machine_count,
+      totalPowerW: round(row.total_power_w),
+      averageTempC: round(row.avg_temp_c),
+      averageGpuUtil: round(row.avg_gpu_util),
+      netRxBps: round(row.net_rx_bps, 0),
+      netTxBps: round(row.net_tx_bps, 0),
+    }));
+  }
+
   function getAlertStates(): Record<string, string> {
     const rows = db.prepare("SELECT machine_name, status FROM alert_states").all() as Array<{ machine_name: string; status: string }>;
     return Object.fromEntries(rows.map((row) => [row.machine_name, row.status]));
@@ -441,6 +484,7 @@ export function createDatabase(dbPath: string) {
     setExpectedGpuCount,
     raiseExpectedGpuCount,
     listFleetHistory,
+    listGroupHistory,
     pruneHistory,
     close,
   };

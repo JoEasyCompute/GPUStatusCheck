@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { MachineWithLatest } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
+import { GroupCharts } from "./GroupCharts";
 import { GroupStats } from "./GroupStats";
 import { buildMachineGroups, computeGroupStats, type MachineGroupBy } from "./machineGroups";
 
@@ -18,9 +19,22 @@ export function MachineCards({
 }) {
   const groups = useMemo(() => buildMachineGroups(machines, groupBy), [machines, groupBy]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [chartsOpen, setChartsOpen] = useState<Set<string>>(new Set());
   const toggleGroup = (label: string) => {
     const key = `${groupBy}:${label}`;
     setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+  const toggleCharts = (label: string) => {
+    const key = `${groupBy}:${label}`;
+    setChartsOpen((current) => {
       const next = new Set(current);
       if (next.has(key)) {
         next.delete(key);
@@ -42,11 +56,27 @@ export function MachineCards({
         return (
           <section key={group.label ?? "__all__"}>
             {group.label !== undefined ? (
-              <button type="button" className="card-group-title" aria-expanded={!isCollapsed} onClick={() => toggleGroup(group.label!)}>
-                <span className="caret" aria-hidden="true">{isCollapsed ? "▸" : "▾"}</span>
-                {group.label || "Unassigned"}
-                <GroupStats stats={computeGroupStats(group.machines)} />
-              </button>
+              <div className="card-group-head">
+                <button type="button" className="card-group-title" aria-expanded={!isCollapsed} onClick={() => toggleGroup(group.label!)}>
+                  <span className="caret" aria-hidden="true">{isCollapsed ? "▸" : "▾"}</span>
+                  {group.label || "Unassigned"}
+                  <GroupStats stats={computeGroupStats(group.machines)} />
+                </button>
+                <button
+                  type="button"
+                  className={`group-charts-toggle ${chartsOpen.has(`${groupBy}:${group.label}`) ? "active" : ""}`}
+                  title="Toggle group history charts"
+                  aria-expanded={chartsOpen.has(`${groupBy}:${group.label}`)}
+                  onClick={() => toggleCharts(group.label!)}
+                >
+                  Charts
+                </button>
+              </div>
+            ) : null}
+            {group.label !== undefined && chartsOpen.has(`${groupBy}:${group.label}`) && (groupBy === "owner" || groupBy === "location") ? (
+              <div className="group-charts-panel">
+                <GroupCharts groupBy={groupBy} label={group.label} />
+              </div>
             ) : null}
             {!isCollapsed ? (
               <div className="machine-cards">

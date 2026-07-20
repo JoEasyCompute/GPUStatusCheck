@@ -171,6 +171,21 @@ describe("api", () => {
     expect(fleet.json().length).toBeGreaterThanOrEqual(2);
     expect(fleet.json().at(-1)).toMatchObject({ okCount: 1, totalPowerW: 250.5 });
 
+    const badGroup = await app.inject({ method: "GET", url: "/api/group-history?by=platform&key=gc" });
+    expect(badGroup.statusCode).toBe(400);
+
+    const groupHistory = await app.inject({ method: "GET", url: "/api/group-history?by=owner&key=ops&hours=24" });
+    expect(groupHistory.statusCode).toBe(200);
+    expect(groupHistory.json().length).toBeGreaterThanOrEqual(1);
+    expect(groupHistory.json().at(-1)).toMatchObject({ machineCount: 1, totalPowerW: 250.5, averageTempC: 61 });
+
+    // beta from the second CSV has no owner, so it lands in the "" (Unassigned) group.
+    const unassigned = await app.inject({ method: "GET", url: "/api/group-history?by=owner&key=" });
+    expect(unassigned.json().at(-1)).toMatchObject({ machineCount: 1, totalPowerW: 250.5 });
+
+    const emptyGroup = await app.inject({ method: "GET", url: "/api/group-history?by=owner&key=nobody" });
+    expect(emptyGroup.json()).toEqual([]);
+
     await app.close();
     db.close();
   });

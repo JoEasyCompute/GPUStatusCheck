@@ -121,6 +121,16 @@ export function buildApp(options: BuildAppOptions) {
     const since = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
     return options.db.listFleetHistory(since);
   });
+  app.get<{ Querystring: { by?: string; key?: string; hours?: string } }>("/api/group-history", async (request, reply) => {
+    const by = request.query.by;
+    if (by !== "owner" && by !== "location") {
+      return reply.code(400).send({ error: "by must be 'owner' or 'location'" });
+    }
+    const hours = Number(request.query.hours);
+    const windowHours = Number.isFinite(hours) && hours > 0 ? Math.min(hours, 24 * 30) : 24;
+    const since = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
+    return options.db.listGroupHistory(by, (request.query.key ?? "").trim(), since);
+  });
   app.get<{ Querystring: { limit?: string } }>("/api/poll-runs", async (request) =>
     options.db.listPollRuns(parseLimit(request.query.limit, 50)),
   );
