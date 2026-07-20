@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { buildRemoteScript, isAuthFailure, parseGpuProcesses, parseProbeOutput } from "../src/server/probe";
+import { buildRemoteScript, isAuthFailure, normalizeGpuType, parseGpuProcesses, parseProbeOutput } from "../src/server/probe";
 
 describe("probe parsing", () => {
   it("parses probe scalars and blocks", () => {
@@ -139,5 +139,35 @@ describe("probe parsing", () => {
     expect(script).not.toContain("\\${");
     expect(syntaxCheck.status).toBe(0);
     expect(syntaxCheck.stderr).toBe("");
+  });
+});
+
+describe("normalizeGpuType", () => {
+  it("extracts the model token instead of the trailing marketing word", () => {
+    expect(normalizeGpuType("NVIDIA RTX 4000 SFF Ada Generation")).toBe("4000");
+    expect(normalizeGpuType("NVIDIA RTX 2000 Ada Generation")).toBe("2000");
+  });
+
+  it("keeps the last word for plain model names", () => {
+    expect(normalizeGpuType("NVIDIA GeForce RTX 4090")).toBe("4090");
+    expect(normalizeGpuType("NVIDIA GeForce RTX 5090")).toBe("5090");
+    expect(normalizeGpuType("NVIDIA A4000")).toBe("A4000");
+    expect(normalizeGpuType("Tesla T4")).toBe("T4");
+  });
+
+  it("skips memory size and memory tech tokens", () => {
+    expect(normalizeGpuType("NVIDIA H100 80GB HBM3")).toBe("H100");
+    expect(normalizeGpuType("NVIDIA A100-SXM4-80GB")).toBe("A100-SXM4-80GB");
+  });
+
+  it("keeps Ti/SUPER suffixes attached to the model", () => {
+    expect(normalizeGpuType("NVIDIA GeForce RTX 3080 Ti")).toBe("3080 Ti");
+    expect(normalizeGpuType("NVIDIA GeForce RTX 4070 SUPER")).toBe("4070 SUPER");
+  });
+
+  it("falls back to the last word when no token has a digit", () => {
+    expect(normalizeGpuType("NVIDIA TITAN X")).toBe("X");
+    expect(normalizeGpuType("")).toBe("");
+    expect(normalizeGpuType("   ")).toBe("");
   });
 });
