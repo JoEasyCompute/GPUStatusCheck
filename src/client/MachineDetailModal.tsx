@@ -82,6 +82,9 @@ function DetailPane({ machine, history, processes }: { machine: MachineWithLates
         <div><dt>Uptime</dt><dd>{latest?.uptime || "-"}</dd></div>
         <div><dt>GPU type</dt><dd>{latest?.gpuType || "-"}</dd></div>
         <div><dt>GPU jobs</dt><dd><GpuJobPills latest={latest} /></dd></div>
+        <div><dt>CPU</dt><dd>{formatCpu(latest)}</dd></div>
+        <div><dt>RAM</dt><dd>{formatCapacity(latest?.memTotalKb, latest?.memUsedPct)}</dd></div>
+        <div><dt>Disk</dt><dd>{formatCapacity(latest?.diskTotalKb, latest?.diskUsedPct)}</dd></div>
         <div><dt>Net I/O</dt><dd>{formatNetRates(latest)}</dd></div>
         <div><dt>SSH error</dt><dd>{errorText || "-"}</dd></div>
         <div><dt>Bus-off</dt><dd>{busOffText || "-"}</dd></div>
@@ -156,6 +159,32 @@ function groupProcessesByGpu(processes: GpuProcess[]): Array<[number, GpuProcess
 function formatMachineNotes(machine: MachineWithLatest): string {
   const notes = machine.activeGpuNotes ?? [];
   return notes.length === 0 ? "-" : notes.map((note) => note.note).join("; ");
+}
+
+function formatCpu(latest?: ProbeResult): string {
+  const model = latest?.cpuModel?.trim() ?? "";
+  const cores = latest?.cpuCores;
+  const util = latest?.cpuUtilPct;
+  if (!model && !cores) {
+    return "-";
+  }
+  const parts = [model || "CPU"];
+  if (cores) {
+    parts.push(`${cores} cores`);
+  }
+  if (util !== null && util !== undefined) {
+    parts.push(`${util.toFixed(1)}% busy`);
+  }
+  return parts.join(" · ");
+}
+
+function formatCapacity(totalKb?: number | null, usedPct?: number | null): string {
+  if (totalKb === null || totalKb === undefined || totalKb <= 0) {
+    return "-";
+  }
+  const gib = totalKb / 1024 / 1024;
+  const size = gib >= 1024 ? `${(gib / 1024).toFixed(1)} TB` : `${gib.toFixed(1)} GB`;
+  return usedPct === null || usedPct === undefined ? size : `${size} · ${usedPct.toFixed(1)}% used`;
 }
 
 function formatNetRates(latest?: ProbeResult): string {

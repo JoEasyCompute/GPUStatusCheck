@@ -16,6 +16,13 @@ describe("probe parsing", () => {
         "GPU_AVG_TEMP_C=67.5",
         "NET_RX_BPS=1250000",
         "NET_TX_BPS=340000",
+        "CPU_MODEL=AMD EPYC 7543 32-Core Processor",
+        "CPU_CORES=128",
+        "CPU_UTIL_PCT=42.7",
+        "MEM_TOTAL_KB=527884568",
+        "MEM_USED_PCT=31.4",
+        "DISK_TOTAL_KB=1843200000",
+        "DISK_USED_PCT=67",
         "BUS_OFF=0",
         "GPU_METRICS<<__GPUCHECK_EOF__",
         "0, 00000000:65:00.0, 91, 42, 67, 312.5, 450.0, 2520, 10501",
@@ -42,6 +49,13 @@ describe("probe parsing", () => {
     expect(parsed.gpuAvgTempC).toBe("67.5");
     expect(parsed.netRxBps).toBe(1250000);
     expect(parsed.netTxBps).toBe(340000);
+    expect(parsed.cpuModel).toBe("AMD EPYC 7543 32-Core Processor");
+    expect(parsed.cpuCores).toBe(128);
+    expect(parsed.cpuUtilPct).toBe(42.7);
+    expect(parsed.memTotalKb).toBe(527884568);
+    expect(parsed.memUsedPct).toBe(31.4);
+    expect(parsed.diskTotalKb).toBe(1843200000);
+    expect(parsed.diskUsedPct).toBe(67);
     expect(parsed.gpuMetrics).toEqual([
       { gpuIndex: 0, pciBusId: "00000000:65:00.0", gpuUtil: 91, memUtil: 42, tempC: 67, powerW: 312.5, powerLimitW: 450, graphicsClockMhz: 2520, memoryClockMhz: 10501 },
       { gpuIndex: 1, pciBusId: "00000000:B3:00.0", gpuUtil: 0, memUtil: 0, tempC: 51, powerW: 48.2, powerLimitW: 450, graphicsClockMhz: 210, memoryClockMhz: 405 },
@@ -111,6 +125,9 @@ describe("probe parsing", () => {
     expect(script).toContain("--query-gpu=index,pci.bus_id,utilization.gpu,utilization.memory,temperature.gpu,power.draw,power.limit,clocks.current.graphics,clocks.current.memory");
     expect(script).toContain("ps -p");
     expect(script).toContain("GPU_METRICS<<__GPUCHECK_EOF__");
+    expect(script).toContain("CPU_UTIL_PCT=");
+    expect(script).toContain("MEM_USED_PCT=");
+    expect(script).toContain("DISK_USED_PCT=");
     expect(script).toContain("PMON_OUTPUT<<__GPUCHECK_EOF__");
     expect(script).toContain("PS_OUTPUT<<__GPUCHECK_EOF__");
   });

@@ -149,6 +149,24 @@ export function buildNetworkChartSeries(history: ProbeResult[]): NetworkChartSer
   };
 }
 
+/** Time series of a single numeric field straight off each probe row. */
+export function buildProbeFieldSeries(
+  history: ProbeResult[],
+  pick: (entry: ProbeResult) => number | null | undefined,
+): PowerChartPoint[] {
+  const points: PowerChartPoint[] = [];
+  const chronologicalHistory = [...history].sort((a, b) => parseTime(a.checkedAt) - parseTime(b.checkedAt));
+  for (const entry of chronologicalHistory) {
+    const timestamp = parseTime(entry.checkedAt);
+    const value = pick(entry);
+    if (!Number.isFinite(timestamp) || value === null || value === undefined || !Number.isFinite(value)) {
+      continue;
+    }
+    points.push({ timestamp, label: new Date(timestamp).toLocaleString(), value });
+  }
+  return points;
+}
+
 export function bpsToMbps(bytesPerSecond: number): number {
   return Number(((bytesPerSecond * 8) / 1_000_000).toFixed(2));
 }

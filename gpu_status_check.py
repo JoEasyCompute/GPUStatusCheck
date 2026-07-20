@@ -88,6 +88,13 @@ class ProbeResult:
     gpu_avg_temp_c: str = ""
     net_rx_bps: str = ""
     net_tx_bps: str = ""
+    cpu_model: str = ""
+    cpu_cores: str = ""
+    cpu_util_pct: str = ""
+    mem_total_kb: str = ""
+    mem_used_pct: str = ""
+    disk_total_kb: str = ""
+    disk_used_pct: str = ""
     bus_off_suspected: bool = False
     bus_off_reason: str = ""
     nvidia_smi_output: str = ""
@@ -569,6 +576,13 @@ def _run_ssh_probe_as(
     result.gpu_avg_temp_c = gpu_avg_temp_c or ""
     result.net_rx_bps = _extract_scalar(stdout, "NET_RX_BPS") or ""
     result.net_tx_bps = _extract_scalar(stdout, "NET_TX_BPS") or ""
+    result.cpu_model = _extract_scalar(stdout, "CPU_MODEL") or ""
+    result.cpu_cores = _extract_scalar(stdout, "CPU_CORES") or ""
+    result.cpu_util_pct = _extract_scalar(stdout, "CPU_UTIL_PCT") or ""
+    result.mem_total_kb = _extract_scalar(stdout, "MEM_TOTAL_KB") or ""
+    result.mem_used_pct = _extract_scalar(stdout, "MEM_USED_PCT") or ""
+    result.disk_total_kb = _extract_scalar(stdout, "DISK_TOTAL_KB") or ""
+    result.disk_used_pct = _extract_scalar(stdout, "DISK_USED_PCT") or ""
     result.nvidia_smi_output = _extract_block(stdout, "NVIDIA_SMI_OUTPUT")
     result.nvidia_smi_error = _extract_block(stdout, "NVIDIA_SMI_ERROR")
     result.kernel_hits = _extract_block(stdout, "KERNEL_HITS")

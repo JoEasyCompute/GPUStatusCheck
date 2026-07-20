@@ -1,16 +1,17 @@
 import { useState } from "react";
 import type { ProbeResult } from "../shared/types";
 import { chartColors, LineChart } from "./LineChart";
-import { buildGpuMetricSeries, buildNetworkChartSeries, buildPowerChartSeries } from "./powerChartData";
+import { buildGpuMetricSeries, buildNetworkChartSeries, buildPowerChartSeries, buildProbeFieldSeries } from "./powerChartData";
 import { useTimeWindow } from "./useTimeWindow";
 
-type MetricTab = "power" | "temp" | "util" | "network";
+type MetricTab = "power" | "temp" | "util" | "network" | "system";
 
 const tabs: Array<{ id: MetricTab; label: string }> = [
   { id: "power", label: "Power" },
   { id: "temp", label: "Temperature" },
   { id: "util", label: "Utilization" },
   { id: "network", label: "Network" },
+  { id: "system", label: "System" },
 ];
 
 export function GpuCharts({ history }: { history: ProbeResult[] }) {
@@ -84,6 +85,21 @@ export function GpuCharts({ history }: { history: ProbeResult[] }) {
 
       {tab === "network" ? (
         <NetworkChart history={history} chartProps={chartProps} />
+      ) : null}
+
+      {tab === "system" ? (
+        <LineChart
+          ariaLabel="CPU, RAM, and disk utilization over time"
+          emptyText="No system utilization history recorded yet."
+          lines={[
+            { label: "CPU", color: chartColors[0], points: buildProbeFieldSeries(history, (entry) => entry.cpuUtilPct) },
+            { label: "RAM", color: chartColors[1], points: buildProbeFieldSeries(history, (entry) => entry.memUsedPct) },
+            { label: "Disk", color: chartColors[2], points: buildProbeFieldSeries(history, (entry) => entry.diskUsedPct) },
+          ]}
+          unit="%"
+          yMax={100}
+          {...chartProps}
+        />
       ) : null}
 
       {tab === "util" ? (

@@ -30,6 +30,13 @@ describe("database", () => {
       gpuJobs: "Dxxxxxxx",
       gpuPowerW: "512.3",
       gpuAvgTempC: "61.5",
+      cpuModel: "AMD EPYC 7543 32-Core Processor",
+      cpuCores: 128,
+      cpuUtilPct: 42.7,
+      memTotalKb: 527884568,
+      memUsedPct: 31.4,
+      diskTotalKb: 1843200000,
+      diskUsedPct: 67,
       processes: [
         {
           gpuIndex: 0,
@@ -71,6 +78,16 @@ describe("database", () => {
     expect(resultId).toBeGreaterThan(0);
     expect(db.listMachines()[0]?.latest?.gpuType).toBe("NVIDIA GeForce RTX 4090");
     expect(db.listMachines()[0]?.latest?.gpuJobs).toBe("Dxxxxxxx");
+    expect(db.listMachines()[0]?.latest).toMatchObject({
+      cpuModel: "AMD EPYC 7543 32-Core Processor",
+      cpuCores: 128,
+      cpuUtilPct: 42.7,
+      memTotalKb: 527884568,
+      memUsedPct: 31.4,
+      diskTotalKb: 1843200000,
+      diskUsedPct: 67,
+    });
+    expect(db.listHistory(machine.id!)[0]).toMatchObject({ cpuUtilPct: 42.7, memUsedPct: 31.4, diskUsedPct: 67 });
     expect(db.listMachines()[0]?.latest?.processes?.[0]).toMatchObject({
       pid: 1234,
       commandLine: "python train.py",

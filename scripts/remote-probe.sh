@@ -86,15 +86,25 @@ if [ "$gpu_count" -gt 0 ] 2>/dev/null && command -v nvidia-smi >/dev/null 2>&1; 
     fi
 fi
 
-# Network throughput: two /proc/net/dev samples one second apart, summing
-# physical interfaces (en*/eth*/ib*/wl*) so loopback, docker bridges, veth
-# pairs, and bond masters do not double-count traffic.
+# Network throughput and CPU utilization share one 1-second sampling window:
+# /proc/net/dev and /proc/stat are both read before and after the same sleep.
+# Physical interfaces only (en*/eth*/ib*/wl*) so loopback, docker bridges,
+# veth pairs, and bond masters do not double-count traffic.
 net_rx_bps=""
 net_tx_bps=""
-if [ -r /proc/net/dev ]; then
-    net_sample1=$(cat /proc/net/dev 2>/dev/null)
+cpu_util_pct=""
+net_sample1=""
+net_sample2=""
+cpu_sample1=""
+cpu_sample2=""
+[ -r /proc/net/dev ] && net_sample1=$(cat /proc/net/dev 2>/dev/null)
+[ -r /proc/stat ] && cpu_sample1=$(grep '^cpu ' /proc/stat 2>/dev/null)
+if [ -n "$net_sample1" ] || [ -n "$cpu_sample1" ]; then
     sleep 1
-    net_sample2=$(cat /proc/net/dev 2>/dev/null)
+    [ -n "$net_sample1" ] && net_sample2=$(cat /proc/net/dev 2>/dev/null)
+    [ -n "$cpu_sample1" ] && cpu_sample2=$(grep '^cpu ' /proc/stat 2>/dev/null)
+fi
+if [ -n "$net_sample1" ] && [ -n "$net_sample2" ]; then
     net_rates=$(printf '%s\n=====SPLIT=====\n%s\n' "$net_sample1" "$net_sample2" | awk '
         /^=====SPLIT=====$/ { second = 1; next }
         {
@@ -113,6 +123,60 @@ if [ -r /proc/net/dev ]; then
         }')
     net_rx_bps=${net_rates%%|*}
     net_tx_bps=${net_rates#*|}
+fi
+
+# CPU busy% from the /proc/stat "cpu" aggregate line deltas
+# (idle = idle + iowait, columns 5 and 6 after the "cpu" label).
+if [ -n "$cpu_sample1" ] && [ -n "$cpu_sample2" ]; then
+    cpu_util_pct=$(printf '%s\n%s\n' "$cpu_sample1" "$cpu_sample2" | awk '
+        NR == 1 { for (i = 2; i <= NF; i++) total1 += $i; idle1 = $5 + $6 }
+        NR == 2 { for (i = 2; i <= NF; i++) total2 += $i; idle2 = $5 + $6 }
+        END {
+            dt = total2 - total1
+            if (dt > 0) {
+                busy = (dt - (idle2 - idle1)) / dt * 100
+                if (busy < 0) busy = 0
+                if (busy > 100) busy = 100
+                printf "%.1f", busy
+            }
+        }')
+fi
+
+cpu_model=""
+cpu_cores=""
+if [ -r /proc/cpuinfo ]; then
+    cpu_model=$(awk -F': ' '/^model name/ { print $2; exit }' /proc/cpuinfo 2>/dev/null)
+    cpu_cores=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null) || cpu_cores=""
+fi
+if [ -z "$cpu_model" ] && command -v lscpu >/dev/null 2>&1; then
+    cpu_model=$(lscpu 2>/dev/null | awk -F': *' '/^Model name/ { print $2; exit }')
+fi
+if [ -z "$cpu_cores" ] && command -v nproc >/dev/null 2>&1; then
+    cpu_cores=$(nproc 2>/dev/null) || cpu_cores=""
+fi
+
+mem_total_kb=""
+mem_used_pct=""
+if [ -r /proc/meminfo ]; then
+    mem_stats=$(awk '
+        /^MemTotal:/ { total = $2 }
+        /^MemAvailable:/ { avail = $2; seen_avail = 1 }
+        END {
+            if (total > 0) {
+                printf "%s|", total
+                if (seen_avail) printf "%.1f", (total - avail) / total * 100
+            } else printf "|"
+        }' /proc/meminfo 2>/dev/null)
+    mem_total_kb=${mem_stats%%|*}
+    mem_used_pct=${mem_stats#*|}
+fi
+
+disk_total_kb=""
+disk_used_pct=""
+if command -v df >/dev/null 2>&1; then
+    disk_stats=$(df -kP / 2>/dev/null | awk 'NR == 2 { pct = $5; sub(/%/, "", pct); printf "%s|%s", $2, pct }')
+    disk_total_kb=${disk_stats%%|*}
+    disk_used_pct=${disk_stats#*|}
 fi
 
 kernel_log=""
@@ -141,6 +205,13 @@ echo "GPU_POWER_W=$gpu_power_w"
 echo "GPU_AVG_TEMP_C=$gpu_avg_temp_c"
 echo "NET_RX_BPS=$net_rx_bps"
 echo "NET_TX_BPS=$net_tx_bps"
+echo "CPU_MODEL=$cpu_model"
+echo "CPU_CORES=$cpu_cores"
+echo "CPU_UTIL_PCT=$cpu_util_pct"
+echo "MEM_TOTAL_KB=$mem_total_kb"
+echo "MEM_USED_PCT=$mem_used_pct"
+echo "DISK_TOTAL_KB=$disk_total_kb"
+echo "DISK_USED_PCT=$disk_used_pct"
 if [ -n "$kernel_hits" ]; then echo "BUS_OFF=1"; else echo "BUS_OFF=0"; fi
 
 printf 'NVIDIA_SMI_OUTPUT<<__GPUCHECK_EOF__\n'

@@ -145,6 +145,13 @@ export function createDatabase(dbPath: string) {
     ensureColumn(db, "probe_results", "ssh_user", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "probe_results", "net_rx_bps", "REAL");
     ensureColumn(db, "probe_results", "net_tx_bps", "REAL");
+    ensureColumn(db, "probe_results", "cpu_model", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(db, "probe_results", "cpu_cores", "INTEGER");
+    ensureColumn(db, "probe_results", "cpu_util_pct", "REAL");
+    ensureColumn(db, "probe_results", "mem_total_kb", "REAL");
+    ensureColumn(db, "probe_results", "mem_used_pct", "REAL");
+    ensureColumn(db, "probe_results", "disk_total_kb", "REAL");
+    ensureColumn(db, "probe_results", "disk_used_pct", "REAL");
     ensureColumn(db, "gpu_metrics", "pci_bus_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_metrics", "power_limit_w", "REAL");
     ensureColumn(db, "gpu_metrics", "graphics_clock_mhz", "INTEGER");
@@ -203,11 +210,13 @@ export function createDatabase(dbPath: string) {
       INSERT INTO probe_results (
         poll_run_id, machine_id, checked_at, status, ssh_ok, ssh_error, ssh_user, remote_host, uptime,
         nvidia_smi_rc, gpu_count, gpu_type, gpu_jobs, gpu_power_w, gpu_avg_temp_c, net_rx_bps, net_tx_bps, bus_off_suspected,
+        cpu_model, cpu_cores, cpu_util_pct, mem_total_kb, mem_used_pct, disk_total_kb, disk_used_pct,
         bus_off_reason, kernel_hits, nvidia_smi_output, nvidia_smi_error, duration_ms
       )
       VALUES (
         @pollRunId, @machineId, @checkedAt, @status, @sshOk, @sshError, @sshUser, @remoteHost, @uptime,
         @nvidiaSmiRc, @gpuCount, @gpuType, @gpuJobs, @gpuPowerW, @gpuAvgTempC, @netRxBps, @netTxBps, @busOffSuspected,
+        @cpuModel, @cpuCores, @cpuUtilPct, @memTotalKb, @memUsedPct, @diskTotalKb, @diskUsedPct,
         @busOffReason, @kernelHits, @nvidiaSmiOutput, @nvidiaSmiError, @durationMs
       )
     `).run({
@@ -228,6 +237,13 @@ export function createDatabase(dbPath: string) {
       gpuAvgTempC: parseNullableNumber(result.gpuAvgTempC),
       netRxBps: result.netRxBps ?? null,
       netTxBps: result.netTxBps ?? null,
+      cpuModel: result.cpuModel ?? "",
+      cpuCores: result.cpuCores ?? null,
+      cpuUtilPct: result.cpuUtilPct ?? null,
+      memTotalKb: result.memTotalKb ?? null,
+      memUsedPct: result.memUsedPct ?? null,
+      diskTotalKb: result.diskTotalKb ?? null,
+      diskUsedPct: result.diskUsedPct ?? null,
       busOffSuspected: result.busOffSuspected ? 1 : 0,
       busOffReason: result.busOffReason ?? "",
       kernelHits: result.kernelHits ?? "",
@@ -276,7 +292,8 @@ export function createDatabase(dbPath: string) {
     const rows = db.prepare(`
       SELECT m.*, pr.id AS latest_id, pr.checked_at, pr.status, pr.ssh_ok, pr.ssh_error, pr.ssh_user, pr.remote_host,
              pr.uptime, pr.nvidia_smi_rc, pr.gpu_count, pr.gpu_type, pr.gpu_jobs, pr.gpu_power_w,
-             pr.gpu_avg_temp_c, pr.net_rx_bps, pr.net_tx_bps, pr.bus_off_suspected, pr.bus_off_reason, pr.duration_ms
+             pr.gpu_avg_temp_c, pr.net_rx_bps, pr.net_tx_bps, pr.bus_off_suspected, pr.bus_off_reason, pr.duration_ms,
+             pr.cpu_model, pr.cpu_cores, pr.cpu_util_pct, pr.mem_total_kb, pr.mem_used_pct, pr.disk_total_kb, pr.disk_used_pct
       FROM machines m
       LEFT JOIN probe_results pr ON pr.id = (
         SELECT id FROM probe_results latest
@@ -600,6 +617,13 @@ type ProbeRow = {
   gpu_avg_temp_c: number | null;
   net_rx_bps: number | null;
   net_tx_bps: number | null;
+  cpu_model: string;
+  cpu_cores: number | null;
+  cpu_util_pct: number | null;
+  mem_total_kb: number | null;
+  mem_used_pct: number | null;
+  disk_total_kb: number | null;
+  disk_used_pct: number | null;
   bus_off_suspected: number;
   bus_off_reason: string;
   kernel_hits: string;
@@ -710,6 +734,13 @@ function rowToMachineWithLatest(row: LatestMachineRow, db: Sqlite): MachineWithL
       gpu_avg_temp_c: row.gpu_avg_temp_c ?? null,
       net_rx_bps: row.net_rx_bps ?? null,
       net_tx_bps: row.net_tx_bps ?? null,
+      cpu_model: row.cpu_model ?? "",
+      cpu_cores: row.cpu_cores ?? null,
+      cpu_util_pct: row.cpu_util_pct ?? null,
+      mem_total_kb: row.mem_total_kb ?? null,
+      mem_used_pct: row.mem_used_pct ?? null,
+      disk_total_kb: row.disk_total_kb ?? null,
+      disk_used_pct: row.disk_used_pct ?? null,
       bus_off_suspected: row.bus_off_suspected ?? 0,
       bus_off_reason: row.bus_off_reason ?? "",
       kernel_hits: "",
@@ -797,6 +828,13 @@ function rowToProbeResult(row: ProbeRow): ProbeResult {
     gpuAvgTempC: row.gpu_avg_temp_c === null ? "" : row.gpu_avg_temp_c.toFixed(1),
     netRxBps: row.net_rx_bps,
     netTxBps: row.net_tx_bps,
+    cpuModel: row.cpu_model,
+    cpuCores: row.cpu_cores,
+    cpuUtilPct: row.cpu_util_pct,
+    memTotalKb: row.mem_total_kb,
+    memUsedPct: row.mem_used_pct,
+    diskTotalKb: row.disk_total_kb,
+    diskUsedPct: row.disk_used_pct,
     busOffSuspected: row.bus_off_suspected === 1,
     busOffReason: row.bus_off_reason,
     kernelHits: row.kernel_hits,

@@ -228,13 +228,25 @@ export function LineChart({
         <text className="chart-label" x={pad.left + plotWidth} y={height - 10} textAnchor="end">{new Date(maxTime).toLocaleTimeString()}</text>
         <g clipPath={`url(#${clipId})`}>
           {visibleLines.map((line) => (
-            <path
-              key={line.label}
-              className="chart-line"
-              d={toPath(line.points, toX, toY)}
-              fill="none"
-              style={{ stroke: line.color }}
-            />
+            line.points.length === 1 ? (
+              // A single sample cannot form a path segment; show a dot so
+              // brand-new series don't look broken until history accumulates.
+              <circle
+                key={line.label}
+                cx={toX(line.points[0].timestamp)}
+                cy={toY(line.points[0].value)}
+                r={3}
+                style={{ fill: line.color }}
+              />
+            ) : (
+              <path
+                key={line.label}
+                className="chart-line"
+                d={toPath(line.points, toX, toY)}
+                fill="none"
+                style={{ stroke: line.color }}
+              />
+            )
           ))}
           {hoverX !== undefined ? (
             <g>

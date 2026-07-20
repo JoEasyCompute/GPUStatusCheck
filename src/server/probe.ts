@@ -19,6 +19,13 @@ export type ParsedProbe = {
   gpuAvgTempC: string;
   netRxBps: number | null;
   netTxBps: number | null;
+  cpuModel: string;
+  cpuCores: number | null;
+  cpuUtilPct: number | null;
+  memTotalKb: number | null;
+  memUsedPct: number | null;
+  diskTotalKb: number | null;
+  diskUsedPct: number | null;
   busOffSuspected: boolean;
   nvidiaSmiOutput: string;
   nvidiaSmiError: string;
@@ -57,6 +64,13 @@ export function parseProbeOutput(stdout: string, processArgsMaxChars: number): P
     gpuAvgTempC: scalar(stdout, "GPU_AVG_TEMP_C") ?? "",
     netRxBps: numericScalar(stdout, "NET_RX_BPS"),
     netTxBps: numericScalar(stdout, "NET_TX_BPS"),
+    cpuModel: scalar(stdout, "CPU_MODEL") ?? "",
+    cpuCores: numericScalar(stdout, "CPU_CORES"),
+    cpuUtilPct: numericScalar(stdout, "CPU_UTIL_PCT"),
+    memTotalKb: numericScalar(stdout, "MEM_TOTAL_KB"),
+    memUsedPct: numericScalar(stdout, "MEM_USED_PCT"),
+    diskTotalKb: numericScalar(stdout, "DISK_TOTAL_KB"),
+    diskUsedPct: numericScalar(stdout, "DISK_USED_PCT"),
     busOffSuspected,
     nvidiaSmiOutput: block(stdout, "NVIDIA_SMI_OUTPUT"),
     nvidiaSmiError: block(stdout, "NVIDIA_SMI_ERROR"),
@@ -233,6 +247,13 @@ async function runProbeAs(machine: Machine, options: RunProbeOptions, user: stri
       gpuAvgTempC: parsed.gpuAvgTempC,
       netRxBps: parsed.netRxBps,
       netTxBps: parsed.netTxBps,
+      cpuModel: parsed.cpuModel,
+      cpuCores: parsed.cpuCores,
+      cpuUtilPct: parsed.cpuUtilPct,
+      memTotalKb: parsed.memTotalKb,
+      memUsedPct: parsed.memUsedPct,
+      diskTotalKb: parsed.diskTotalKb,
+      diskUsedPct: parsed.diskUsedPct,
       busOffSuspected: parsed.busOffSuspected,
       busOffReason: reasons.join("; "),
       nvidiaSmiOutput: parsed.nvidiaSmiOutput,

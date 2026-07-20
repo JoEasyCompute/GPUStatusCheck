@@ -105,6 +105,13 @@ export type ProbeResult = {
   gpuAvgTempC?: string;
   netRxBps?: number | null;
   netTxBps?: number | null;
+  cpuModel?: string;
+  cpuCores?: number | null;
+  cpuUtilPct?: number | null;
+  memTotalKb?: number | null;
+  memUsedPct?: number | null;
+  diskTotalKb?: number | null;
+  diskUsedPct?: number | null;
   busOffSuspected?: boolean;
   busOffReason?: string;
   nvidiaSmiOutput?: string;

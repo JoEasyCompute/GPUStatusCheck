@@ -152,10 +152,12 @@ SQLite, and serves a React dashboard with:
   header expands 24h group history charts (total power, average temperature,
   average GPU utilization, and total network in/out) backed by
   `GET /api/group-history?by=owner|location&key=<label>&hours=24`
-- A per-machine modal with metadata, tabbed charts (Power, Temperature,
-  Utilization, Network in/out) over the last 24 hours with pinch-to-zoom and
-  drag-to-pan, GPU process history, and probe history; clicking the IP copies
-  a ready-to-use SSH command
+- A per-machine modal with metadata (including CPU model/cores, total RAM,
+  and total disk with current usage), tabbed charts (Power, Temperature,
+  Utilization, Network in/out, and System with CPU/RAM/disk utilization %)
+  over the last 24 hours with pinch-to-zoom and drag-to-pan, GPU process
+  history, and probe history; clicking the IP copies a ready-to-use SSH
+  command
 - Built-in Telegram alerting, maintenance mode, and a health/watchdog endpoint
   (see sections below)
 
