@@ -148,7 +148,10 @@ SQLite, and serves a React dashboard with:
 - Two display modes — a sortable table and a card grid whose border color
   shows machine status — with optional grouping by owner or location; group
   headers are collapsible and summarize count, ok/degraded/ssh-failed, total
-  and average power, and average temperature
+  and average power, and average temperature; a Charts button in each group
+  header expands 24h group history charts (total power, average temperature,
+  average GPU utilization, and total network in/out) backed by
+  `GET /api/group-history?by=owner|location&key=<label>&hours=24`
 - A per-machine modal with metadata, tabbed charts (Power, Temperature,
   Utilization, Network in/out) over the last 24 hours with pinch-to-zoom and
   drag-to-pan, GPU process history, and probe history; clicking the IP copies

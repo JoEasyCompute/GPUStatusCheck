@@ -25,6 +25,17 @@ export type FleetHistoryPoint = {
   averageTempC: number | null;
 };
 
+export type GroupHistoryPoint = {
+  pollRunId: number;
+  startedAt: string;
+  machineCount: number;
+  totalPowerW: number | null;
+  averageTempC: number | null;
+  averageGpuUtil: number | null;
+  netRxBps: number | null;
+  netTxBps: number | null;
+};
+
 export type GpuProcess = {
   id?: number;
   probeResultId?: number;

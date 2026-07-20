@@ -152,6 +152,55 @@ describe("database", () => {
     db.close();
   });
 
+  it("aggregates per-group history by owner and location", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-group-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+
+    const alpha = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22, owner: "iota", location: "Shed1" });
+    const beta = db.upsertMachine({ name: "beta", ip: "10.0.0.2", sshHost: "10.0.0.2", sshPort: 22, owner: "iota", location: "Shed2" });
+    const gamma = db.upsertMachine({ name: "gamma", ip: "10.0.0.3", sshHost: "10.0.0.3", sshPort: 22, owner: "mining", location: "Shed1" });
+
+    const runId = db.createPollRun(3);
+    db.insertProbeResult(runId, alpha.id!, {
+      name: "alpha", ip: "10.0.0.1", sshOk: true, status: "ok", gpuCount: 2, gpuJobs: "DD",
+      gpuPowerW: "400", gpuAvgTempC: "60", netRxBps: 1000, netTxBps: 2000,
+      gpuMetrics: [{ gpuIndex: 0, gpuUtil: 90 }, { gpuIndex: 1, gpuUtil: 70 }],
+    });
+    db.insertProbeResult(runId, beta.id!, {
+      name: "beta", ip: "10.0.0.2", sshOk: true, status: "ok", gpuCount: 1, gpuJobs: "D",
+      gpuPowerW: "100", gpuAvgTempC: "40", netRxBps: 500, netTxBps: 500,
+      gpuMetrics: [{ gpuIndex: 0, gpuUtil: 20 }],
+    });
+    db.insertProbeResult(runId, gamma.id!, {
+      name: "gamma", ip: "10.0.0.3", sshOk: true, status: "ok", gpuCount: 1, gpuJobs: "D",
+      gpuPowerW: "999", gpuAvgTempC: "99", netRxBps: 9999, netTxBps: 9999,
+      gpuMetrics: [{ gpuIndex: 0, gpuUtil: 100 }],
+    });
+    db.finishPollRun(runId);
+
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const iota = db.listGroupHistory("owner", "iota", since);
+    expect(iota).toHaveLength(1);
+    expect(iota[0]).toMatchObject({
+      pollRunId: runId,
+      machineCount: 2,
+      totalPowerW: 500,
+      averageTempC: 50,
+      averageGpuUtil: 60,
+      netRxBps: 1500,
+      netTxBps: 2500,
+    });
+
+    const shed1 = db.listGroupHistory("location", "Shed1", since);
+    expect(shed1).toHaveLength(1);
+    expect(shed1[0]).toMatchObject({ machineCount: 2, totalPowerW: 1399, averageTempC: 79.5, averageGpuUtil: 86.7 });
+
+    expect(db.listGroupHistory("owner", "nobody", since)).toHaveLength(0);
+
+    db.close();
+  });
+
   it("tracks active GPU down notes until a successful recovery probe clears them", () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-db-notes-"));
     const db = createDatabase(join(dir, "test.sqlite"));
