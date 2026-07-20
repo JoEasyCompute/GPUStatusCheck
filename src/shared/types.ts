@@ -45,6 +45,7 @@ export type GpuProcess = {
   gpuIndex: number;
   gpuUuid?: string;
   owner?: string;
+  machineName?: string;
   pid: number;
   processType?: string;
   smUtil?: number | null;
@@ -86,6 +87,18 @@ export type GpuIdentity = {
   lastGpuIndex: number | null;
   lastOwner: string;
   sightingCount?: number;
+};
+
+export type GpuDailyStat = {
+  uuid: string;
+  day: string;
+  sampleCount: number;
+  avgGpuUtil: number | null;
+  maxGpuUtil: number | null;
+  avgTempC: number | null;
+  maxTempC: number | null;
+  avgPowerW: number | null;
+  maxPowerW: number | null;
 };
 
 export type GpuSighting = {

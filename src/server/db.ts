@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import type { FleetHistoryPoint, GpuDownNote, GpuIdentity, GpuMetric, GpuProcess, GpuSighting, GroupHistoryPoint, Machine, MachineWithLatest, PollRun, ProbeResult, Summary } from "../shared/types";
+import type { FleetHistoryPoint, GpuDailyStat, GpuDownNote, GpuIdentity, GpuMetric, GpuProcess, GpuSighting, GroupHistoryPoint, Machine, MachineWithLatest, PollRun, ProbeResult, Summary } from "../shared/types";
 
 type Sqlite = Database.Database;
 
@@ -129,6 +129,20 @@ export function createDatabase(dbPath: string) {
         last_seen_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS gpu_daily_stats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uuid TEXT NOT NULL,
+        day TEXT NOT NULL,
+        sample_count INTEGER NOT NULL,
+        avg_gpu_util REAL,
+        max_gpu_util REAL,
+        avg_temp_c REAL,
+        max_temp_c REAL,
+        avg_power_w REAL,
+        max_power_w REAL,
+        UNIQUE(uuid, day)
+      );
+
       CREATE TABLE IF NOT EXISTS alert_states (
         machine_name TEXT PRIMARY KEY,
         status TEXT NOT NULL,
@@ -183,6 +197,7 @@ export function createDatabase(dbPath: string) {
     ensureColumn(db, "gpu_down_events", "gpu_uuid", "TEXT NOT NULL DEFAULT ''");
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_gpu_metrics_uuid ON gpu_metrics(uuid, checked_at);
+      CREATE INDEX IF NOT EXISTS idx_gpu_processes_uuid ON gpu_processes(gpu_uuid, checked_at);
       CREATE INDEX IF NOT EXISTS idx_gpu_sightings_uuid ON gpu_sightings(gpu_uuid, last_seen_at);
       CREATE INDEX IF NOT EXISTS idx_gpu_sightings_machine ON gpu_sightings(machine_id, gpu_index);
     `);
@@ -496,7 +511,7 @@ export function createDatabase(dbPath: string) {
     }));
   }
 
-  function getGpu(uuid: string, metricsSince?: string, metricsLimit = 2000): { gpu: GpuIdentity; sightings: GpuSighting[]; metrics: GpuMetric[] } | undefined {
+  function getGpu(uuid: string, metricsSince?: string, metricsLimit = 2000): { gpu: GpuIdentity; sightings: GpuSighting[]; metrics: GpuMetric[]; processes: GpuProcess[]; dailyStats: GpuDailyStat[] } | undefined {
     const row = db.prepare(`
       SELECT g.uuid, g.gpu_type, g.first_seen_at, g.last_seen_at, g.last_machine_id, g.last_gpu_index, g.last_owner,
              m.name AS last_machine_name
@@ -521,6 +536,25 @@ export function createDatabase(dbPath: string) {
     const metrics = metricsSince
       ? db.prepare("SELECT * FROM gpu_metrics WHERE uuid = ? AND checked_at >= ? ORDER BY checked_at DESC LIMIT ?").all(uuid, metricsSince, metricsLimit) as MetricRow[]
       : db.prepare("SELECT * FROM gpu_metrics WHERE uuid = ? ORDER BY checked_at DESC LIMIT ?").all(uuid, metricsLimit) as MetricRow[];
+    const processSql = `
+      SELECT p.*, m.name AS machine_name
+      FROM gpu_processes p
+      LEFT JOIN machines m ON m.id = p.machine_id
+      WHERE p.gpu_uuid = ?${metricsSince ? " AND p.checked_at >= ?" : ""}
+      ORDER BY p.checked_at DESC, p.pid ASC LIMIT ?
+    `;
+    const processes = (metricsSince
+      ? db.prepare(processSql).all(uuid, metricsSince, metricsLimit)
+      : db.prepare(processSql).all(uuid, metricsLimit)) as Array<ProcessRow & { machine_name: string | null }>;
+    const dailyStats = db.prepare(`
+      SELECT uuid, day, sample_count, avg_gpu_util, max_gpu_util, avg_temp_c, max_temp_c, avg_power_w, max_power_w
+      FROM gpu_daily_stats WHERE uuid = ? ORDER BY day DESC LIMIT 400
+    `).all(uuid) as Array<{
+      uuid: string; day: string; sample_count: number;
+      avg_gpu_util: number | null; max_gpu_util: number | null;
+      avg_temp_c: number | null; max_temp_c: number | null;
+      avg_power_w: number | null; max_power_w: number | null;
+    }>;
     return {
       gpu: { ...rowToGpuIdentity(row), lastMachineName: row.last_machine_name ?? undefined, sightingCount: sightings.length },
       sightings: sightings.map((sighting) => ({
@@ -534,6 +568,18 @@ export function createDatabase(dbPath: string) {
         lastSeenAt: sighting.last_seen_at,
       })),
       metrics: metrics.map(rowToMetric),
+      processes: processes.map((row) => ({ ...rowToProcess(row), machineName: row.machine_name ?? undefined })),
+      dailyStats: dailyStats.map((row) => ({
+        uuid: row.uuid,
+        day: row.day,
+        sampleCount: row.sample_count,
+        avgGpuUtil: row.avg_gpu_util,
+        maxGpuUtil: row.max_gpu_util,
+        avgTempC: row.avg_temp_c,
+        maxTempC: row.max_temp_c,
+        avgPowerW: row.avg_power_w,
+        maxPowerW: row.max_power_w,
+      })),
     };
   }
 
@@ -554,7 +600,39 @@ export function createDatabase(dbPath: string) {
     replaceAll(Object.entries(states));
   }
 
+  /**
+   * Folds each completed UTC day of per-GPU telemetry into gpu_daily_stats,
+   * which retention pruning never touches — so per-card stats survive far
+   * beyond the raw-row retention window. Watermarked on MAX(day): finalized
+   * days are skipped, making the per-poll call an indexed no-op except right
+   * after midnight UTC. Runs before pruning so a day can never be deleted
+   * unrolled. Idempotent (recomputes on conflict).
+   */
+  function rollupGpuDailyStats(): number {
+    const today = new Date().toISOString().slice(0, 10);
+    const watermark = (db.prepare("SELECT MAX(day) AS day FROM gpu_daily_stats").get() as { day: string | null }).day;
+    const fromIso = watermark ? `${watermark}T24:00:00` : "";
+    const info = db.prepare(`
+      INSERT INTO gpu_daily_stats (uuid, day, sample_count, avg_gpu_util, max_gpu_util, avg_temp_c, max_temp_c, avg_power_w, max_power_w)
+      SELECT uuid, substr(checked_at, 1, 10) AS day, COUNT(*),
+             AVG(gpu_util), MAX(gpu_util), AVG(temp_c), MAX(temp_c), AVG(power_w), MAX(power_w)
+      FROM gpu_metrics
+      WHERE uuid != '' AND checked_at >= ? AND checked_at < ?
+      GROUP BY uuid, day
+      ON CONFLICT(uuid, day) DO UPDATE SET
+        sample_count = excluded.sample_count,
+        avg_gpu_util = excluded.avg_gpu_util,
+        max_gpu_util = excluded.max_gpu_util,
+        avg_temp_c = excluded.avg_temp_c,
+        max_temp_c = excluded.max_temp_c,
+        avg_power_w = excluded.avg_power_w,
+        max_power_w = excluded.max_power_w
+    `).run(fromIso, `${today}T00:00:00`);
+    return info.changes;
+  }
+
   function pruneHistory(retentionDays: number): number {
+    rollupGpuDailyStats();
     if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
       return 0;
     }
@@ -603,6 +681,7 @@ export function createDatabase(dbPath: string) {
     listGroupHistory,
     listGpus,
     getGpu,
+    rollupGpuDailyStats,
     pruneHistory,
     close,
   };

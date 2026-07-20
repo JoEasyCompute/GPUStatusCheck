@@ -162,7 +162,11 @@ SQLite, and serves a React dashboard with:
   an identity table follows each physical card across machines/slots/tenants
   (sighting segments), per-GPU job rows carry the owner renting the GPU at
   probe time, and down events resolve the card via its last known slot;
-  query with `GET /api/gpus` and `GET /api/gpus/<uuid>?hours=N`
+  query with `GET /api/gpus` and `GET /api/gpus/<uuid>?hours=N` (identity,
+  sightings, metric history, job history, and daily rollups). Completed UTC
+  days of per-GPU telemetry are folded into `gpu_daily_stats` before
+  retention pruning runs, so long-term per-card stats survive beyond
+  `GPUCHECK_RETENTION_DAYS`
 - Built-in Telegram alerting, maintenance mode, and a health/watchdog endpoint
   (see sections below)
 

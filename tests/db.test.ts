@@ -276,10 +276,31 @@ describe("database", () => {
     expect(detail.metrics).toHaveLength(3);
     expect(new Set(detail.metrics.map((metric) => metric.machineId))).toEqual(new Set([alpha.id, beta.id]));
 
-    // Jobs carry the tenant that was renting the GPU at probe time.
+    // Jobs carry the tenant that was renting the GPU at probe time, and the
+    // per-card view returns them across machines with the machine name.
     expect(db.listProcesses(alpha.id!)[0]).toMatchObject({ owner: "iota", gpuUuid: uuid });
+    expect(detail.processes).toHaveLength(1);
+    expect(detail.processes[0]).toMatchObject({ pid: 42, owner: "iota", machineName: "alpha", commandLine: "python train.py" });
 
     expect(db.getGpu("GPU-nope")).toBeUndefined();
+
+    // Backdate the alpha-era samples to yesterday: the daily rollup folds the
+    // completed day into gpu_daily_stats and survives retention pruning.
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    db.raw.prepare("UPDATE gpu_metrics SET checked_at = ? WHERE poll_run_id IN (?, ?)").run(yesterday, run1, run2);
+    expect(db.rollupGpuDailyStats()).toBeGreaterThan(0);
+    const rolled = db.getGpu(uuid)!;
+    expect(rolled.dailyStats).toHaveLength(1);
+    expect(rolled.dailyStats[0]).toMatchObject({
+      day: yesterday.slice(0, 10),
+      sampleCount: 2,
+      avgGpuUtil: 47.5,
+      maxGpuUtil: 95,
+      avgPowerW: 160,
+      maxPowerW: 300,
+    });
+    // Finalized days are watermarked, so the per-poll call becomes a no-op.
+    expect(db.rollupGpuDailyStats()).toBe(0);
 
     db.close();
   });

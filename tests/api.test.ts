@@ -203,6 +203,9 @@ describe("api", () => {
     expect(gpuDetail.statusCode).toBe(200);
     expect(gpuDetail.json().sightings).toHaveLength(2);
     expect(gpuDetail.json().metrics.length).toBeGreaterThanOrEqual(2);
+    expect(gpuDetail.json().processes.length).toBeGreaterThanOrEqual(1);
+    expect(gpuDetail.json().processes[0]).toMatchObject({ pid: 123, gpuUuid: "GPU-feed1111-2222-3333-4444-555566667777" });
+    expect(Array.isArray(gpuDetail.json().dailyStats)).toBe(true);
 
     const missingGpu = await app.inject({ method: "GET", url: "/api/gpus/GPU-nope" });
     expect(missingGpu.statusCode).toBe(404);
