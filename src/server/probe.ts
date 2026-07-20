@@ -88,8 +88,20 @@ function normalizeGpuJobs(gpuJobs: string, gpuCount: number | null, busOffSuspec
   return "E".repeat(Math.max(1, width));
 }
 
-function normalizeGpuType(value: string): string {
+// Memory size/tech tokens ("80GB", "HBM3") contain digits but aren't the model.
+const NON_MODEL_TOKEN = /^(\d+\s?(gb|gib|g)|hbm\d\w*)$/i;
+const MODEL_SUFFIXES = new Set(["ti", "super"]);
+
+export function normalizeGpuType(value: string): string {
   const parts = value.trim().split(/\s+/).filter(Boolean);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const token = parts[i];
+    if (!/\d/.test(token) || NON_MODEL_TOKEN.test(token)) {
+      continue;
+    }
+    const next = parts[i + 1];
+    return next && MODEL_SUFFIXES.has(next.toLowerCase()) ? `${token} ${next}` : token;
+  }
   return parts.at(-1) ?? "";
 }
 
