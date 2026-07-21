@@ -2,11 +2,39 @@ import type { Machine, PollStatus, ProbeResult } from "../shared/types";
 import { buildAlerts, formatAlertMessage, sendTelegramMessage, splitMessage, type AlertInput } from "./alerts";
 import type { AppConfig } from "./config";
 import type { DashboardDatabase } from "./db";
+import { detectGpuDrops } from "./gpuDrops";
 import { readInventoryFromFile } from "./inventory";
 import { runProbe } from "./probe";
+import {
+  buildAllRecoveredMessage,
+  buildDropMessage,
+  buildRecoveryMessage,
+  loadChannelMap,
+  postSlack,
+  resolveChannel,
+  type SendSlack,
+} from "./slack";
+
+/** A malformed or missing channel map must never abort a poll. */
+function safeLoadChannelMap(path: string) {
+  try {
+    return loadChannelMap(path);
+  } catch (error) {
+    console.error("loading slack channel map failed", error);
+    return {};
+  }
+}
 
 export type ProbeMachine = (machine: Machine) => Promise<ProbeResult>;
 export type SendAlertChunk = (chunk: string) => Promise<void>;
+
+type ProbeObservation = {
+  machine: Machine;
+  visibleUuids: string[];
+  sshOk: boolean;
+  gpuCount: number;
+  reason: string;
+};
 
 export class PollScheduler {
   private running = false;
@@ -39,6 +67,7 @@ export class PollScheduler {
       }),
     private readonly sendAlertChunk: SendAlertChunk = (chunk) =>
       sendTelegramMessage(config.telegramBotToken, config.telegramChatId, chunk),
+    private readonly sendSlack: SendSlack = (post) => postSlack(config.slackBotToken, post),
   ) {}
 
   start(): void {
@@ -125,9 +154,19 @@ export class PollScheduler {
       runId = this.db.createPollRun(storedMachines.length);
       this.currentPoll.runId = runId;
       const outcomes: AlertInput[] = [];
+      const observations: ProbeObservation[] = [];
       await runConcurrent(storedMachines, Math.max(1, this.config.jobs), async (machine) => {
         const result = await this.probeMachine(machine);
         this.applyExpectedGpuCount(machine, result);
+        // The roster diff must run against the cards this probe saw, before the
+        // sightings table is updated by insertProbeResult.
+        observations.push({
+          machine,
+          visibleUuids: (result.gpuMetrics ?? []).map((metric) => metric.uuid ?? "").filter(Boolean),
+          sshOk: result.sshOk === true,
+          gpuCount: result.gpuCount ?? 0,
+          reason: result.busOffReason || result.nvidiaSmiError || "",
+        });
         this.db.insertProbeResult(runId, machine.id!, result);
         outcomes.push({
           name: machine.name,
@@ -139,6 +178,11 @@ export class PollScheduler {
       });
       this.db.finishPollRun(runId);
       try {
+        this.recordGpuDrops(observations);
+      } catch (error) {
+        console.error("gpu drop detection failed", error);
+      }
+      try {
         const pruned = this.db.pruneHistory(this.config.retentionDays);
         if (pruned > 0) {
           console.log(`pruned ${pruned} history rows older than ${this.config.retentionDays} days`);
@@ -147,6 +191,7 @@ export class PollScheduler {
         console.error("history prune failed", error);
       }
       await this.deliverAlerts(outcomes);
+      await this.deliverGpuDropAnnouncements();
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
       if (runId > 0) {
@@ -201,6 +246,151 @@ export class PollScheduler {
         .filter(Boolean)
         .join("; ");
     }
+  }
+
+  /**
+   * Diffs each machine's expected GPU roster against what the probe reported and
+   * records incidents. Recording is independent of delivery: rows are written
+   * even for owners with no Slack channel and for muted machines, so history
+   * stays complete and unmuting never replays old drops.
+   */
+  private recordGpuDrops(observations: ProbeObservation[]): void {
+    const channelMap = this.config.slackBotToken || this.config.slackDryRun
+      ? safeLoadChannelMap(this.config.slackChannelsPath)
+      : {};
+    const at = new Date().toISOString();
+
+    for (const observation of observations) {
+      const machineId = observation.machine.id;
+      if (!machineId) {
+        continue;
+      }
+      const roster = this.db.listMachineRoster(machineId);
+      const detection = detectGpuDrops(roster, observation);
+      const open = this.db.getOpenDropIncident(machineId);
+
+      if (detection.skipped) {
+        continue;
+      }
+
+      if (open) {
+        const recovered = open.members
+          .filter((member) => !member.recoveredAt && detection.visible.has(member.uuid))
+          .map((member) => member.uuid);
+        if (recovered.length > 0) {
+          this.db.closeDropMembers(open.id, recovered, at);
+        }
+        // Cards that dropped after the incident opened join the same thread.
+        const known = new Set(open.members.map((member) => member.uuid));
+        const additional = detection.dropped.filter((entry) => !known.has(entry.uuid));
+        if (additional.length > 0) {
+          this.db.addDropMembers(open.id, additional, at);
+        }
+        continue;
+      }
+
+      if (detection.dropped.length === 0) {
+        continue;
+      }
+      const owner = (observation.machine.owner ?? "").trim();
+      const channel = resolveChannel(owner, channelMap)?.channel ?? "";
+      this.db.openDropIncident({
+        machineId,
+        owner,
+        channel: observation.machine.maintenance === true ? "" : channel,
+        dropped: detection.dropped,
+        visibleCount: detection.visible.size,
+        expectedCount: roster.length,
+        wholeMachine: detection.wholeMachine,
+        reason: observation.reason,
+        at,
+      });
+      console.log(`gpu drop: ${observation.machine.name} lost ${detection.dropped.length}/${roster.length} GPUs`);
+    }
+  }
+
+  /**
+   * Posts pending incident messages. Announcement timestamps are written only
+   * after Slack confirms, so any failure simply retries on the next poll, and a
+   * recovery reply is never attempted before its parent thread exists.
+   */
+  private async deliverGpuDropAnnouncements(): Promise<void> {
+    if (!this.config.slackBotToken && !this.config.slackDryRun) {
+      return;
+    }
+    const channelMap = safeLoadChannelMap(this.config.slackChannelsPath);
+    let incidents: ReturnType<DashboardDatabase["listPendingDropIncidents"]>;
+    try {
+      incidents = this.db.listPendingDropIncidents();
+    } catch (error) {
+      console.error("reading pending gpu drop incidents failed", error);
+      return;
+    }
+
+    for (const incident of incidents) {
+      if (incident.maintenance) {
+        continue;
+      }
+      const mention = resolveChannel(incident.owner, channelMap)?.mention;
+      try {
+        if (!incident.announcedAt) {
+          const text = buildDropMessage({
+            machineName: incident.machineName,
+            owner: incident.owner,
+            dropped: incident.members.map((member) => ({
+              uuid: member.uuid,
+              gpuIndex: member.gpuIndex,
+              gpuType: member.gpuType,
+            })),
+            visibleCount: incident.visibleCount,
+            expectedCount: incident.expectedCount,
+            wholeMachine: incident.wholeMachine,
+            reason: incident.reason,
+            mention,
+          });
+          const ts = await this.postOrLog({ channel: incident.channel, text });
+          this.db.markIncidentAnnounced(incident.id, ts, new Date().toISOString());
+          incident.slackTs = ts;
+          incident.announcedAt = new Date().toISOString();
+        }
+
+        for (const member of incident.members) {
+          if (!member.recoveredAt || member.recoveryAnnouncedAt) {
+            continue;
+          }
+          await this.postOrLog({
+            channel: incident.channel,
+            text: buildRecoveryMessage(
+              { uuid: member.uuid, gpuIndex: member.gpuIndex, gpuType: member.gpuType },
+              member.droppedAt,
+              member.recoveredAt,
+            ),
+            threadTs: incident.slackTs || undefined,
+            broadcast: true,
+          });
+          this.db.markRecoveryAnnounced(member.id, new Date().toISOString());
+        }
+
+        if (incident.closedAt && !incident.allRecoveredAnnouncedAt) {
+          await this.postOrLog({
+            channel: incident.channel,
+            text: buildAllRecoveredMessage(incident.machineName),
+            threadTs: incident.slackTs || undefined,
+          });
+          this.db.markAllRecoveredAnnounced(incident.id, new Date().toISOString());
+        }
+      } catch (error) {
+        console.error(`slack announcement failed for incident ${incident.id}; will retry next poll`, error);
+      }
+    }
+  }
+
+  private async postOrLog(post: { channel: string; text: string; threadTs?: string; broadcast?: boolean }): Promise<string> {
+    if (this.config.slackDryRun) {
+      console.log(`[slack dry-run] channel=${post.channel}${post.threadTs ? ` thread=${post.threadTs}` : ""}\n${post.text}`);
+      return post.threadTs ?? `dry-run-${Date.now()}`;
+    }
+    return this.sendSlack(post);
   }
 
   private async deliverAlerts(outcomes: AlertInput[]): Promise<void> {

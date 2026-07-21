@@ -11,3 +11,4 @@ report.json
 .omx/
 .omc/
 __pycache__/
+slack-channels.json

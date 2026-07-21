@@ -229,6 +229,9 @@ GPUCHECK_DISABLE_STARTUP_POLL=0
 GPUCHECK_RETENTION_DAYS=30
 GPUCHECK_HOST=127.0.0.1
 PORT=4100
+SLACK_BOT_TOKEN=
+GPUCHECK_SLACK_CHANNELS=slack-channels.json
+GPUCHECK_SLACK_DRY_RUN=0
 ```
 
 `GPUCHECK_HOST` controls the bind address (default `127.0.0.1`). Set
@@ -241,6 +244,40 @@ History older than `GPUCHECK_RETENTION_DAYS` (default 30) is pruned from the
 SQLite database after each poll so it does not grow without bound. Each
 machine's most recent probe result is always kept, even if it is older than
 the retention window. Set `GPUCHECK_RETENTION_DAYS=0` to keep history forever.
+
+### Slack GPU drop announcements
+
+Each poll compares a machine's expected GPU roster — every card whose most recent
+sighting points at that machine — against the UUIDs the probe actually reported.
+Cards that vanish open an *incident*: one Slack message per machine per event,
+listing every card lost in that poll. Each card's return is posted as a reply in
+that thread (broadcast so it also shows in the channel), followed by an
+all-clear once the last one is back.
+
+Set `SLACK_BOT_TOKEN` (a bot token with the `chat:write` scope) and map owners to
+channels in `slack-channels.json` (gitignored, re-read every poll so edits need
+no restart):
+
+```json
+{
+  "iota":    { "channel": "C0123456789" },
+  "Vast":    { "channel": "C0456789012", "mention": "@ops" },
+  "cloreai": { "channel": "C0789012345" }
+}
+```
+
+The bot must be invited to each channel (`/invite @your-bot`) or Slack replies
+`channel_not_found`. An owner with no entry never alerts, which is how idle or
+internal machines stay quiet; `mention` is optional and is prepended to drop
+messages only. Set `GPUCHECK_SLACK_DRY_RUN=1` to log the messages that would be
+sent without contacting Slack.
+
+Incidents are always recorded, even when there is no channel or the machine is
+in maintenance, so history stays complete and unmuting a machine never replays
+old drops. Announcement timestamps are written only after Slack confirms
+delivery, so a failed send retries on the next poll instead of being lost.
+Unreachable hosts are skipped entirely — a host that cannot be probed says
+nothing about its cards, so an SSH outage never fires false GPU-drop alerts.
 
 ### Dashboard Telegram alerts
 

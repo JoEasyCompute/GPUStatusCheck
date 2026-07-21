@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import type { GpuIdentity } from "../shared/types";
+import { shortGpuUuid } from "../shared/gpuUuid";
 import { formatTime } from "./formatters";
-import { shortUuid } from "./gpuFormat";
 
 type GpuSortKey = "uuid" | "gpuType" | "machine" | "slot" | "owner" | "sightings" | "lastSeen";
 type GpuSort = { key: GpuSortKey; direction: "asc" | "desc" };
@@ -49,7 +49,7 @@ export function GpuInventory({
               className={gpu.uuid === selectedUuid ? "selected" : ""}
               onClick={() => onSelect(gpu.uuid)}
             >
-              <td className="name-cell mono" title={gpu.uuid}>{shortUuid(gpu.uuid)}</td>
+              <td className="name-cell mono" title={gpu.uuid}>{shortGpuUuid(gpu.uuid)}</td>
               <td>{gpu.gpuType || "-"}</td>
               <td>{gpu.lastMachineName || "-"}</td>
               <td className="num">{gpu.lastGpuIndex ?? "-"}</td>

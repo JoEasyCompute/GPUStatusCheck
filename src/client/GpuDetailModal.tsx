@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { GpuDailyStat, GpuIdentity, GpuMetric, GpuProcess, GpuSighting } from "../shared/types";
 import { copyText } from "./clipboard";
+import { shortGpuUuid } from "../shared/gpuUuid";
 import { formatNullable, formatTime } from "./formatters";
-import { shortUuid } from "./gpuFormat";
 import { chartColors, LineChart } from "./LineChart";
 import { buildDailySeries, buildMetricFieldSeries } from "./powerChartData";
 import { useTimeWindow } from "./useTimeWindow";
@@ -55,7 +55,7 @@ export function GpuDetailModal({ uuid, onClose, onOpenMachine }: {
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
       <div className="modal-panel" role="dialog" aria-modal="true" aria-label={`GPU ${uuid} details`} onClick={(event) => event.stopPropagation()}>
         <div className="modal-head">
-          <h2>GPU {shortUuid(uuid)}</h2>
+          <h2>GPU {shortGpuUuid(uuid)}</h2>
           {detail?.gpu.gpuType ? <span className="chip">{detail.gpu.gpuType}</span> : null}
           <button className="ip-copy" title="Copy full UUID" onClick={() => void copyUuid()}>{uuid}</button>
           {copied ? <span className="chip copied">copied</span> : null}

@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import type { FleetHistoryPoint, GpuDailyStat, GpuDownNote, GpuIdentity, GpuMetric, GpuProcess, GpuSighting, GroupHistoryPoint, Machine, MachineWithLatest, PollRun, ProbeResult, Summary } from "../shared/types";
+import type { DropIncident, RosterEntry } from "./gpuDrops";
 
 type Sqlite = Database.Database;
 
@@ -143,6 +144,35 @@ export function createDatabase(dbPath: string) {
         UNIQUE(uuid, day)
       );
 
+      CREATE TABLE IF NOT EXISTS gpu_drop_incidents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        machine_id INTEGER NOT NULL,
+        owner TEXT NOT NULL DEFAULT '',
+        channel TEXT NOT NULL DEFAULT '',
+        slack_ts TEXT NOT NULL DEFAULT '',
+        opened_at TEXT NOT NULL,
+        closed_at TEXT,
+        announced_at TEXT,
+        all_recovered_announced_at TEXT,
+        visible_count INTEGER,
+        expected_count INTEGER,
+        whole_machine INTEGER NOT NULL DEFAULT 0,
+        reason TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY(machine_id) REFERENCES machines(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS gpu_drop_members (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        incident_id INTEGER NOT NULL,
+        gpu_uuid TEXT NOT NULL,
+        gpu_index INTEGER,
+        gpu_type TEXT NOT NULL DEFAULT '',
+        dropped_at TEXT NOT NULL,
+        recovered_at TEXT,
+        recovery_announced_at TEXT,
+        FOREIGN KEY(incident_id) REFERENCES gpu_drop_incidents(id)
+      );
+
       CREATE TABLE IF NOT EXISTS alert_states (
         machine_name TEXT PRIMARY KEY,
         status TEXT NOT NULL,
@@ -201,6 +231,8 @@ export function createDatabase(dbPath: string) {
       CREATE INDEX IF NOT EXISTS idx_gpu_processes_uuid ON gpu_processes(gpu_uuid, checked_at);
       CREATE INDEX IF NOT EXISTS idx_gpu_sightings_uuid ON gpu_sightings(gpu_uuid, last_seen_at);
       CREATE INDEX IF NOT EXISTS idx_gpu_sightings_machine ON gpu_sightings(machine_id, gpu_index);
+      CREATE INDEX IF NOT EXISTS idx_gpu_drop_incidents_machine ON gpu_drop_incidents(machine_id, closed_at);
+      CREATE INDEX IF NOT EXISTS idx_gpu_drop_members_incident ON gpu_drop_members(incident_id);
     `);
   }
 
@@ -584,6 +616,130 @@ export function createDatabase(dbPath: string) {
     };
   }
 
+  /**
+   * The cards a machine is expected to have: every GPU whose most recent
+   * sighting points here. A card moved to another host updates its own latest
+   * sighting, so it leaves this roster automatically.
+   */
+  function listMachineRoster(machineId: number): RosterEntry[] {
+    const rows = db.prepare(`
+      SELECT s.gpu_uuid, s.gpu_index, COALESCE(g.gpu_type, '') AS gpu_type
+      FROM gpu_sightings s
+      LEFT JOIN gpus g ON g.uuid = s.gpu_uuid
+      WHERE s.id = (
+        SELECT latest.id FROM gpu_sightings latest
+        WHERE latest.gpu_uuid = s.gpu_uuid
+        ORDER BY latest.last_seen_at DESC, latest.id DESC LIMIT 1
+      ) AND s.machine_id = ?
+      ORDER BY s.gpu_index ASC
+    `).all(machineId) as Array<{ gpu_uuid: string; gpu_index: number | null; gpu_type: string }>;
+    return rows.map((row) => ({ uuid: row.gpu_uuid, gpuIndex: row.gpu_index, gpuType: row.gpu_type }));
+  }
+
+  function getOpenDropIncident(machineId: number): DropIncident | undefined {
+    const row = db.prepare(`
+      SELECT * FROM gpu_drop_incidents WHERE machine_id = ? AND closed_at IS NULL
+      ORDER BY id DESC LIMIT 1
+    `).get(machineId) as DropIncidentRow | undefined;
+    return row ? rowToDropIncident(db, row) : undefined;
+  }
+
+  function openDropIncident(input: {
+    machineId: number;
+    owner: string;
+    channel: string;
+    dropped: RosterEntry[];
+    visibleCount: number;
+    expectedCount: number;
+    wholeMachine: boolean;
+    reason: string;
+    at: string;
+  }): number {
+    const info = db.prepare(`
+      INSERT INTO gpu_drop_incidents (
+        machine_id, owner, channel, opened_at, visible_count, expected_count, whole_machine, reason
+      ) VALUES (@machineId, @owner, @channel, @at, @visibleCount, @expectedCount, @wholeMachine, @reason)
+    `).run({
+      machineId: input.machineId,
+      owner: input.owner,
+      channel: input.channel,
+      at: input.at,
+      visibleCount: input.visibleCount,
+      expectedCount: input.expectedCount,
+      wholeMachine: input.wholeMachine ? 1 : 0,
+      reason: input.reason,
+    });
+    const incidentId = Number(info.lastInsertRowid);
+    addDropMembers(incidentId, input.dropped, input.at);
+    return incidentId;
+  }
+
+  /** Cards that dropped later during an already-open incident join it. */
+  function addDropMembers(incidentId: number, dropped: RosterEntry[], at: string): number {
+    const existing = new Set((db.prepare("SELECT gpu_uuid FROM gpu_drop_members WHERE incident_id = ? AND recovered_at IS NULL")
+      .all(incidentId) as Array<{ gpu_uuid: string }>).map((row) => row.gpu_uuid));
+    const insert = db.prepare(`
+      INSERT INTO gpu_drop_members (incident_id, gpu_uuid, gpu_index, gpu_type, dropped_at)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    let added = 0;
+    for (const entry of dropped) {
+      if (existing.has(entry.uuid)) {
+        continue;
+      }
+      insert.run(incidentId, entry.uuid, entry.gpuIndex, entry.gpuType, at);
+      added += 1;
+    }
+    return added;
+  }
+
+  /** Marks members recovered and closes the incident once none remain open. */
+  function closeDropMembers(incidentId: number, uuids: string[], at: string): void {
+    if (uuids.length > 0) {
+      const placeholders = uuids.map(() => "?").join(",");
+      db.prepare(`
+        UPDATE gpu_drop_members SET recovered_at = ?
+        WHERE incident_id = ? AND recovered_at IS NULL AND gpu_uuid IN (${placeholders})
+      `).run(at, incidentId, ...uuids);
+    }
+    const stillDown = db.prepare("SELECT COUNT(*) AS open FROM gpu_drop_members WHERE incident_id = ? AND recovered_at IS NULL")
+      .get(incidentId) as { open: number };
+    if (stillDown.open === 0) {
+      db.prepare("UPDATE gpu_drop_incidents SET closed_at = ? WHERE id = ? AND closed_at IS NULL").run(at, incidentId);
+    }
+  }
+
+  /**
+   * Incidents with Slack work outstanding: never announced, or with recovered
+   * members whose replies have not been delivered. Announcement timestamps are
+   * only set after Slack confirms, so failures resurface here next poll.
+   */
+  function listPendingDropIncidents(): DropIncident[] {
+    const rows = db.prepare(`
+      SELECT * FROM gpu_drop_incidents
+      WHERE channel != '' AND (
+        announced_at IS NULL
+        OR EXISTS (SELECT 1 FROM gpu_drop_members m WHERE m.incident_id = gpu_drop_incidents.id
+                   AND m.recovered_at IS NOT NULL AND m.recovery_announced_at IS NULL)
+        OR (closed_at IS NOT NULL AND all_recovered_announced_at IS NULL)
+      )
+      ORDER BY id ASC
+    `).all() as DropIncidentRow[];
+    return rows.map((row) => rowToDropIncident(db, row));
+  }
+
+  function markIncidentAnnounced(incidentId: number, slackTs: string, at: string): void {
+    db.prepare("UPDATE gpu_drop_incidents SET announced_at = ?, slack_ts = ? WHERE id = ?").run(at, slackTs, incidentId);
+  }
+
+  function markRecoveryAnnounced(memberId: number, at: string): void {
+    db.prepare("UPDATE gpu_drop_members SET recovery_announced_at = ? WHERE id = ?").run(at, memberId);
+  }
+
+  function markAllRecoveredAnnounced(incidentId: number, at: string): void {
+    db.prepare("UPDATE gpu_drop_incidents SET all_recovered_announced_at = ? WHERE id = ?").run(at, incidentId);
+  }
+
   function getAlertStates(): Record<string, string> {
     const rows = db.prepare("SELECT machine_name, status FROM alert_states").all() as Array<{ machine_name: string; status: string }>;
     return Object.fromEntries(rows.map((row) => [row.machine_name, row.status]));
@@ -682,6 +838,15 @@ export function createDatabase(dbPath: string) {
     listGroupHistory,
     listGpus,
     getGpu,
+    listMachineRoster,
+    getOpenDropIncident,
+    openDropIncident,
+    addDropMembers,
+    closeDropMembers,
+    listPendingDropIncidents,
+    markIncidentAnnounced,
+    markRecoveryAnnounced,
+    markAllRecoveredAnnounced,
     rollupGpuDailyStats,
     pruneHistory,
     close,
@@ -1126,6 +1291,59 @@ function rowToMetric(row: MetricRow): GpuMetric {
     powerLimitW: row.power_limit_w,
     graphicsClockMhz: row.graphics_clock_mhz,
     memoryClockMhz: row.memory_clock_mhz,
+  };
+}
+
+type DropIncidentRow = {
+  id: number;
+  machine_id: number;
+  owner: string;
+  channel: string;
+  slack_ts: string;
+  opened_at: string;
+  closed_at: string | null;
+  announced_at: string | null;
+  all_recovered_announced_at: string | null;
+  visible_count: number | null;
+  expected_count: number | null;
+  whole_machine: number;
+  reason: string;
+};
+
+function rowToDropIncident(db: Sqlite, row: DropIncidentRow): DropIncident {
+  const members = db.prepare("SELECT * FROM gpu_drop_members WHERE incident_id = ? ORDER BY gpu_index ASC, id ASC")
+    .all(row.id) as Array<{
+      id: number; gpu_uuid: string; gpu_index: number | null; gpu_type: string;
+      dropped_at: string; recovered_at: string | null; recovery_announced_at: string | null;
+    }>;
+  const machine = db.prepare("SELECT name, maintenance FROM machines WHERE id = ?").get(row.machine_id) as
+    | { name: string; maintenance: number }
+    | undefined;
+  return {
+    id: row.id,
+    machineId: row.machine_id,
+    machineName: machine?.name ?? `machine ${row.machine_id}`,
+    maintenance: machine?.maintenance === 1,
+    owner: row.owner,
+    channel: row.channel,
+    slackTs: row.slack_ts,
+    openedAt: row.opened_at,
+    closedAt: row.closed_at ?? undefined,
+    announcedAt: row.announced_at ?? undefined,
+    allRecoveredAnnouncedAt: row.all_recovered_announced_at ?? undefined,
+    visibleCount: row.visible_count ?? 0,
+    expectedCount: row.expected_count ?? 0,
+    wholeMachine: row.whole_machine === 1,
+    reason: row.reason,
+    members: members.map((member) => ({
+      id: member.id,
+      uuid: member.gpu_uuid,
+      gpuIndex: member.gpu_index,
+      gpuType: member.gpu_type,
+      droppedAt: member.dropped_at,
+      recoveredAt: member.recovered_at ?? undefined,
+      recoveryAnnouncedAt: member.recovery_announced_at ?? undefined,
+    })),
   };
 }
 

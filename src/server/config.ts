@@ -18,6 +18,9 @@ export type AppConfig = {
   retentionDays: number;
   telegramBotToken: string;
   telegramChatId: string;
+  slackBotToken: string;
+  slackChannelsPath: string;
+  slackDryRun: boolean;
   notifyRecovery: boolean;
   heartbeatUrl: string;
   host: string;
@@ -46,6 +49,9 @@ export function loadConfig(env = process.env): AppConfig {
     retentionDays: numberEnv(value("GPUCHECK_RETENTION_DAYS"), 30),
     telegramBotToken: value("TELEGRAM_BOT_TOKEN") || "",
     telegramChatId: value("TELEGRAM_CHAT_ID") || "",
+    slackBotToken: value("SLACK_BOT_TOKEN") || "",
+    slackChannelsPath: value("GPUCHECK_SLACK_CHANNELS") || "slack-channels.json",
+    slackDryRun: boolEnv(value("GPUCHECK_SLACK_DRY_RUN"), false),
     notifyRecovery: boolEnv(value("GPUCHECK_NOTIFY_RECOVERY"), false),
     heartbeatUrl: value("GPUCHECK_HEARTBEAT_URL") || "",
     host: value("GPUCHECK_HOST") || "127.0.0.1",
