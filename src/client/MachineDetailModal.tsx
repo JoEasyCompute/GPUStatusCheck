@@ -11,6 +11,7 @@ export function MachineDetailModal({
   onClose,
   onToggleMaintenance,
   onCopySsh,
+  onSelectGpu,
 }: {
   machine: MachineWithLatest;
   history: ProbeResult[];
@@ -18,6 +19,7 @@ export function MachineDetailModal({
   onClose: () => void;
   onToggleMaintenance: (machine: MachineWithLatest) => void;
   onCopySsh: (machine: MachineWithLatest) => Promise<void> | void;
+  onSelectGpu?: (uuid: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const latest = history[0] ?? machine.latest;
@@ -44,13 +46,13 @@ export function MachineDetailModal({
             ✕
           </button>
         </div>
-        <DetailPane machine={machine} history={history} processes={processes} />
+        <DetailPane machine={machine} history={history} processes={processes} onSelectGpu={onSelectGpu} />
       </div>
     </div>
   );
 }
 
-function DetailPane({ machine, history, processes }: { machine: MachineWithLatest; history: ProbeResult[]; processes: GpuProcess[] }) {
+function DetailPane({ machine, history, processes, onSelectGpu }: { machine: MachineWithLatest; history: ProbeResult[]; processes: GpuProcess[]; onSelectGpu?: (uuid: string) => void }) {
   const [processSearch, setProcessSearch] = useState("");
   const latest = history[0] ?? machine.latest;
   const processNeedle = processSearch.trim().toLowerCase();
@@ -81,7 +83,7 @@ function DetailPane({ machine, history, processes }: { machine: MachineWithLates
         <div><dt>SSH user</dt><dd>{latest?.sshUser || "-"}</dd></div>
         <div><dt>Uptime</dt><dd>{latest?.uptime || "-"}</dd></div>
         <div><dt>GPU type</dt><dd>{latest?.gpuType || "-"}</dd></div>
-        <div><dt>GPU jobs</dt><dd><GpuJobPills latest={latest} /></dd></div>
+        <div><dt>GPU jobs</dt><dd><GpuJobPills latest={latest} onSelectGpu={onSelectGpu} /></dd></div>
         <div><dt>CPU</dt><dd>{formatCpu(latest)}</dd></div>
         <div><dt>RAM</dt><dd>{formatCapacity(latest?.memTotalKb, latest?.memUsedPct)}</dd></div>
         <div><dt>Disk</dt><dd>{formatCapacity(latest?.diskTotalKb, latest?.diskUsedPct)}</dd></div>

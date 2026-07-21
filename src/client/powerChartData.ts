@@ -149,6 +149,42 @@ export function buildNetworkChartSeries(history: ProbeResult[]): NetworkChartSer
   };
 }
 
+/** Time series of one field across a single GPU's metric rows, which may
+ * span several machines when the card has been moved. */
+export function buildMetricFieldSeries(
+  metrics: GpuMetric[],
+  pick: (metric: GpuMetric) => number | null | undefined,
+): PowerChartPoint[] {
+  const points: PowerChartPoint[] = [];
+  const chronological = [...metrics].sort((a, b) => parseTime(a.checkedAt) - parseTime(b.checkedAt));
+  for (const metric of chronological) {
+    const timestamp = parseTime(metric.checkedAt);
+    const value = pick(metric);
+    if (!Number.isFinite(timestamp) || value === null || value === undefined || !Number.isFinite(value)) {
+      continue;
+    }
+    points.push({ timestamp, label: new Date(timestamp).toLocaleString(), value });
+  }
+  return points;
+}
+
+/** Daily rollup series; each point is anchored at midnight UTC of its day. */
+export function buildDailySeries<T extends { day: string }>(
+  days: T[],
+  pick: (day: T) => number | null | undefined,
+): PowerChartPoint[] {
+  const points: PowerChartPoint[] = [];
+  for (const entry of [...days].sort((a, b) => a.day.localeCompare(b.day))) {
+    const timestamp = Date.parse(`${entry.day}T00:00:00Z`);
+    const value = pick(entry);
+    if (!Number.isFinite(timestamp) || value === null || value === undefined || !Number.isFinite(value)) {
+      continue;
+    }
+    points.push({ timestamp, label: entry.day, value });
+  }
+  return points;
+}
+
 /** Time series of a single numeric field straight off each probe row. */
 export function buildProbeFieldSeries(
   history: ProbeResult[],

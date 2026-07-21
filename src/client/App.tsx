@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { buildSshCommand } from "../shared/ssh";
-import type { EditableRuntimeConfig, GpuProcess, MachineWithLatest, PollStatus, ProbeResult, RuntimeConfig, Summary } from "../shared/types";
+import type { EditableRuntimeConfig, GpuIdentity, GpuProcess, MachineWithLatest, PollStatus, ProbeResult, RuntimeConfig, Summary } from "../shared/types";
 import { copyText } from "./clipboard";
 import { FleetCharts } from "./FleetCharts";
+import { GpuDetailModal } from "./GpuDetailModal";
+import { GpuInventory } from "./GpuInventory";
 import { MachineCards } from "./MachineCards";
 import type { MachineGroupBy } from "./machineGroups";
 import { MachineDetailModal } from "./MachineDetailModal";
@@ -10,7 +12,7 @@ import { MachineTable } from "./MachineTable";
 import { formatElapsed, formatTime } from "./formatters";
 
 type StatusFilter = "all" | "not_ok" | "ok" | "degraded" | "ssh_failed";
-type ViewMode = "table" | "cards";
+type ViewMode = "table" | "cards" | "gpus";
 
 function storedChoice<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {
@@ -52,7 +54,9 @@ export function App() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [gpuTypeFilter, setGpuTypeFilter] = useState("all");
   const [search, setSearch] = useState("");
-  const [viewMode, setViewMode] = useState<ViewMode>(() => storedChoice("gpucheck.viewMode", ["table", "cards"], "table"));
+  const [viewMode, setViewMode] = useState<ViewMode>(() => storedChoice("gpucheck.viewMode", ["table", "cards", "gpus"], "table"));
+  const [gpus, setGpus] = useState<GpuIdentity[]>([]);
+  const [selectedGpuUuid, setSelectedGpuUuid] = useState<string | undefined>();
   const [groupBy, setGroupBy] = useState<MachineGroupBy>(() => storedChoice("gpucheck.groupBy", ["none", "owner", "location"], "none"));
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState("");
@@ -68,17 +72,19 @@ export function App() {
 
   async function refresh() {
     try {
-      const [summaryResponse, machinesResponse, configResponse, pollStatusResponse] = await Promise.all([
+      const [summaryResponse, machinesResponse, configResponse, pollStatusResponse, gpusResponse] = await Promise.all([
         fetch("/api/summary"),
         fetch("/api/machines"),
         fetch("/api/config"),
         fetch("/api/poll-status"),
+        fetch("/api/gpus"),
       ]);
       setSummary(await summaryResponse.json());
       const nextMachines = await machinesResponse.json() as MachineWithLatest[];
       setMachines(nextMachines);
       setConfig(await configResponse.json());
       setPollStatus(await pollStatusResponse.json());
+      setGpus(await gpusResponse.json() as GpuIdentity[]);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -260,6 +266,17 @@ export function App() {
     });
   }, [machines, search, statusFilter, gpuTypeFilter]);
 
+  const filteredGpus = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return gpus.filter((gpu) => {
+      const typeMatches = gpuTypeFilter === "all" || gpu.gpuType === gpuTypeFilter;
+      const searchMatches = !needle || [gpu.uuid, gpu.gpuType, gpu.lastMachineName, gpu.lastOwner]
+        .filter(Boolean)
+        .some((value) => value!.toLowerCase().includes(needle));
+      return typeMatches && searchMatches;
+    });
+  }, [gpus, search, gpuTypeFilter]);
+
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId);
 
   return (
@@ -399,28 +416,49 @@ export function App() {
           >
             Cards
           </button>
+          <button
+            role="tab"
+            aria-selected={viewMode === "gpus"}
+            className={`chart-tab ${viewMode === "gpus" ? "active" : ""}`}
+            onClick={() => {
+              setViewMode("gpus");
+              storeChoice("gpucheck.viewMode", "gpus");
+            }}
+          >
+            GPUs
+          </button>
         </div>
-        <select
-          value={groupBy}
-          onChange={(event) => {
-            const next = event.target.value as MachineGroupBy;
-            setGroupBy(next);
-            storeChoice("gpucheck.groupBy", next);
-          }}
-        >
-          <option value="none">No grouping</option>
-          <option value="owner">Group by owner</option>
-          <option value="location">Group by location</option>
-        </select>
-        <span className="toolbar-count">{filteredMachines.length} of {machines.length} machines</span>
+        {viewMode !== "gpus" ? (
+          <select
+            value={groupBy}
+            onChange={(event) => {
+              const next = event.target.value as MachineGroupBy;
+              setGroupBy(next);
+              storeChoice("gpucheck.groupBy", next);
+            }}
+          >
+            <option value="none">No grouping</option>
+            <option value="owner">Group by owner</option>
+            <option value="location">Group by location</option>
+          </select>
+        ) : null}
+        <span className="toolbar-count">
+          {viewMode === "gpus"
+            ? `${filteredGpus.length} of ${gpus.length} GPUs`
+            : `${filteredMachines.length} of ${machines.length} machines`}
+        </span>
       </section>
 
       <section className="layout">
         {viewMode === "table" ? (
           <MachineTable machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} groupBy={groupBy} />
-        ) : (
+        ) : null}
+        {viewMode === "cards" ? (
           <MachineCards machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} groupBy={groupBy} />
-        )}
+        ) : null}
+        {viewMode === "gpus" ? (
+          <GpuInventory gpus={filteredGpus} selectedUuid={selectedGpuUuid} onSelect={setSelectedGpuUuid} />
+        ) : null}
       </section>
 
       {selectedMachine ? (
@@ -430,10 +468,27 @@ export function App() {
           processes={processes}
           onToggleMaintenance={toggleMaintenance}
           onCopySsh={copySshCommand}
+          onSelectGpu={(uuid) => {
+            setSelectedMachineId(undefined);
+            setHistory([]);
+            setProcesses([]);
+            setSelectedGpuUuid(uuid);
+          }}
           onClose={() => {
             setSelectedMachineId(undefined);
             setHistory([]);
             setProcesses([]);
+          }}
+        />
+      ) : null}
+
+      {selectedGpuUuid ? (
+        <GpuDetailModal
+          uuid={selectedGpuUuid}
+          onClose={() => setSelectedGpuUuid(undefined)}
+          onOpenMachine={(machineId) => {
+            setSelectedGpuUuid(undefined);
+            setSelectedMachineId(machineId);
           }}
         />
       ) : null}

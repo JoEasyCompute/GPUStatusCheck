@@ -1,7 +1,7 @@
 import type { ProbeResult } from "../shared/types";
 import { formatNullable, formatPower } from "./formatters";
 
-export function GpuJobPills({ latest }: { latest?: ProbeResult }) {
+export function GpuJobPills({ latest, onSelectGpu }: { latest?: ProbeResult; onSelectGpu?: (uuid: string) => void }) {
   const jobs = latest?.gpuJobs ?? "";
   const gpuCount = latest?.gpuCount ?? jobs.length;
   const width = Math.max(gpuCount || 0, jobs.length);
@@ -15,8 +15,23 @@ export function GpuJobPills({ latest }: { latest?: ProbeResult }) {
         const state = jobs[gpuIndex] ?? "x";
         const metric = latest.gpuMetrics?.find((item) => item.gpuIndex === gpuIndex);
         const gpuProcesses = latest.processes?.filter((process) => process.gpuIndex === gpuIndex) ?? [];
+        const uuid = metric?.uuid;
+        const clickable = Boolean(uuid && onSelectGpu);
         return (
-          <span className={`gpu-pill ${pillClass(state)}`} key={gpuIndex} tabIndex={0}>
+          <span
+            className={`gpu-pill ${pillClass(state)} ${clickable ? "clickable" : ""}`}
+            key={gpuIndex}
+            tabIndex={0}
+            role={clickable ? "button" : undefined}
+            title={clickable ? "Open GPU lifecycle" : undefined}
+            onClick={clickable ? () => onSelectGpu!(uuid!) : undefined}
+            onKeyDown={clickable ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onSelectGpu!(uuid!);
+              }
+            } : undefined}
+          >
             {gpuIndex}
             <span className="gpu-tooltip" role="tooltip">
               <strong>GPU {gpuIndex}</strong>

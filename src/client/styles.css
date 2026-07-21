@@ -878,6 +878,69 @@ tbody tr.group-charts-row:hover {
   color: var(--crit-ink);
 }
 
+.gpu-pill.clickable {
+  cursor: pointer;
+}
+
+.gpu-pill.clickable:hover {
+  outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* ---------- GPU lifecycle ---------- */
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.sighting-row {
+  align-items: center;
+  display: grid;
+  font-size: 12.5px;
+  gap: 10px;
+  grid-template-columns: 62px minmax(0, 1fr) 70px minmax(0, 1fr) minmax(0, 1.6fr);
+  padding: 7px 2px;
+}
+
+.sighting-row + .sighting-row {
+  border-top: 1px solid var(--hairline);
+}
+
+.sighting-row .chip.current {
+  background: color-mix(in srgb, var(--good) 16%, transparent);
+  color: var(--good-ink);
+}
+
+.link-button {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12.5px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-button:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.gpu-job-row {
+  display: grid;
+  font-size: 12.5px;
+  gap: 10px;
+  grid-template-columns: 120px minmax(0, 1fr) 80px 90px minmax(0, 2fr);
+  padding: 6px 2px;
+}
+
+.gpu-job-row + .gpu-job-row {
+  border-top: 1px solid var(--hairline);
+}
+
 .gpu-tooltip {
   background: var(--surface);
   border: 1px solid var(--hairline);
