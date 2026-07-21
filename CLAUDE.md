@@ -27,14 +27,27 @@ just need `npm run build` (static files are served from disk per request).
   (a full-disk host once silently reported 0 GPUs via failed temp-file
   writes); capture command output in shell variables only.
 - `src/server/` — Fastify app (`app.ts`), poll scheduler with Telegram
-  alerting (`scheduler.ts`, `alerts.ts`), SQLite via better-sqlite3 (`db.ts`,
-  schema created in `migrate()`, columns added with `ensureColumn`),
+  alerting (`scheduler.ts`, `alerts.ts`), per-card GPU drop detection and
+  Slack announcements (`gpuDrops.ts`, `slack.ts`), SQLite via better-sqlite3
+  (`db.ts`, schema created in `migrate()`, columns added with `ensureColumn`),
   config from `.env` (`config.ts`, `GPUCHECK_*` variables).
 - `src/client/` — React. `LineChart.tsx` is the shared zoom/pan chart
   (window math in `timeWindow.ts` + `useTimeWindow.ts`); design tokens and
   light/dark theme live in `styles.css` (colors come from a CVD-validated
   palette; series colors are `--series-1..8` in fixed order — never shuffle).
-- `src/shared/types.ts` — types shared by server and client.
+- `src/shared/` — `types.ts` (types shared by server and client) plus small
+  helpers used by both, e.g. `gpuUuid.ts`, `ssh.ts`.
+
+## GPU identity
+
+GPUs are tracked by nvidia UUID, so a card's history follows it between
+machines: `gpus` (identity, high-water type/machine/slot/owner),
+`gpu_sightings` (one row per continuous machine+slot+owner stretch),
+`gpu_metrics.uuid` (telemetry), and `gpu_daily_stats` (daily rollups, folded
+in by `rollupGpuDailyStats()` before pruning so long-term per-card stats
+outlive `GPUCHECK_RETENTION_DAYS`). A machine's expected roster is every card
+whose *latest* sighting points at it (`listMachineRoster`) — moving a card
+updates its own sighting, so it leaves the old roster automatically.
 
 ## Behavior invariants
 
@@ -45,6 +58,18 @@ just need `npm run build` (static files are served from disk per request).
   long-unreachable machines keep their last known state.
 - `expected_gpu_count` is the highest healthy count seen; fewer visible GPUs
   on a healthy probe marks the machine degraded ("only N/M GPUs visible").
+  That is a count-level signal only — which *card* vanished comes from the
+  UUID roster diff (`detectGpuDrops`), not from this.
+- GPU drop detection only runs on probes where SSH succeeded: an unreachable
+  host says nothing about its cards, so an outage must never fire N false
+  drop alerts. Incidents are recorded even when the owner has no Slack
+  channel or the machine is muted, so unmuting never replays old drops.
+- Slack announcement timestamps (`announced_at`, `recovery_announced_at`)
+  advance only after Slack confirms — same retry-safety rule as
+  `alert_states`. Slack returns HTTP 200 with `{ok:false}` on application
+  errors, so `postSlack` checks the body, not just the status.
+- `gpu_drop_incidents` / `gpu_drop_members` and the GPU identity tables are
+  never touched by `pruneHistory`.
 - SSH probes retry once as `GPUCHECK_FALLBACK_USER` (default `ubuntu`) only on
   auth-shaped failures, never on network failures/timeouts; the working user
   is stored per probe (`probe_results.ssh_user`).
@@ -53,9 +78,12 @@ just need `npm run build` (static files are served from disk per request).
 
 ## Conventions
 
-- Real inventory CSVs (`machines.csv`, `iota*.csv`, …) and `.env` are
-  gitignored; only `machines.sample.csv` is committed. Never commit real IPs
-  or tokens.
+- Real inventory CSVs (`machines.csv`, `iota*.csv`, …), `.env`, and
+  `slack-channels.json` are gitignored; only `machines.sample.csv` is
+  committed. Never commit real IPs, channel IDs, or tokens.
+- `vitest` is scoped to this checkout in `vite.config.ts`; Claude task
+  worktrees under `.claude/worktrees` contain a copy of `tests/` that would
+  otherwise be collected twice.
 - Config test literals in `tests/api.test.ts` / `tests/alerts.test.ts` must be
   updated whenever `AppConfig` gains a required field.
 - Update README.md when adding env vars or user-facing features.

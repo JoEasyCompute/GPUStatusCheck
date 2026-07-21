@@ -10,15 +10,17 @@ For each machine, the probe:
 1. SSHes in with a configurable username and private key (with an automatic
    fallback user on auth failure)
 2. Runs `nvidia-smi -L` and collects per-GPU telemetry (utilization, memory,
-   temperature, power, clocks, PCIe bus id)
+   temperature, power, clocks, PCIe bus id, and each card's UUID)
 3. Checks which GPUs have active `nvidia-smi pmon` process rows and enriches
    them with `ps` command lines
 4. Sums current GPU power draw in watts and averages GPU temperature
-5. Samples network traffic in/out (two `/proc/net/dev` readings one second
-   apart, physical interfaces only)
-6. Captures machine uptime and checks recent kernel logs for common GPU
+5. Samples network traffic in/out and CPU busy% (two `/proc/net/dev` and
+   `/proc/stat` readings sharing one second, physical interfaces only)
+6. Reads CPU model and core count, RAM total/used%, and root-filesystem
+   total/used%
+7. Captures machine uptime and checks recent kernel logs for common GPU
    bus-off patterns
-7. Prints a summary table and optionally JSON
+8. Prints a summary table and optionally JSON
 
 The probe writes nothing to the target host's disk, so it stays accurate even
 on machines with a full filesystem.
@@ -26,6 +28,10 @@ on machines with a full filesystem.
 It can also run in a watch loop and send Telegram alerts when a machine
 changes from healthy to degraded or SSH-failed. Duplicate alerts are suppressed
 with a small persisted state file.
+
+The dashboard additionally tracks every physical GPU by UUID, so a card's
+history follows it between machines, and announces per-card drops to a Slack
+channel per owner (see the sections below).
 
 ## Files
 
@@ -35,6 +41,9 @@ with a small persisted state file.
 - `scripts/remote-probe.sh` — the remote probe script, shared by the CLI and
   the web dashboard (single source of truth for what runs on each host)
 - `.env.example` — sample configuration
+- `slack-channels.json` — owner → Slack channel map for GPU drop
+  announcements (gitignored; see the Slack section below)
+- `slack-channels.sample.json` — commit-safe example channel map to copy from
 
 ## Configuration
 

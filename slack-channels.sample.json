@@ -1,0 +1,5 @@
+{
+  "iota": { "channel": "C0123456789" },
+  "Vast": { "channel": "C0456789012", "mention": "@ops" },
+  "cloreai": "C0789012345"
+}
