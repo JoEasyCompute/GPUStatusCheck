@@ -145,8 +145,11 @@ SQLite, and serves a React dashboard with:
 
 - Summary tiles (machine counts by status, total fleet power, average temp)
 - A collapsible fleet history panel (total power and status counts over 24h)
-- Two display modes — a sortable table and a card grid whose border color
-  shows machine status — with free-text search plus status and GPU-type
+- Three display modes — a sortable machine table, a card grid whose border
+  color shows machine status, and a GPUs view listing every physical card by
+  UUID (type, current machine/slot/tenant, placement count, last seen) whose
+  rows open a per-card lifecycle modal with charts, placement history, daily
+  rollups, and job history — with free-text search plus status and GPU-type
   filters (type options carry live machine counts), and optional grouping
   by owner or location; group
   headers are collapsible and summarize count, ok/degraded/ssh-failed, total
