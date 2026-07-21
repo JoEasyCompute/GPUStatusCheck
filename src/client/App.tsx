@@ -9,7 +9,7 @@ import { MachineDetailModal } from "./MachineDetailModal";
 import { MachineTable } from "./MachineTable";
 import { formatElapsed, formatTime } from "./formatters";
 
-type StatusFilter = "all" | "ok" | "degraded" | "ssh_failed";
+type StatusFilter = "all" | "not_ok" | "ok" | "degraded" | "ssh_failed";
 type ViewMode = "table" | "cards";
 
 function storedChoice<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
@@ -250,7 +250,8 @@ export function App() {
     const needle = search.trim().toLowerCase();
     return machines.filter((machine) => {
       const status = machine.latest?.status ?? "unknown";
-      const statusMatches = statusFilter === "all" || status === statusFilter;
+      const statusMatches = statusFilter === "all"
+        || (statusFilter === "not_ok" ? status !== "ok" : status === statusFilter);
       const gpuTypeMatches = gpuTypeFilter === "all" || (machine.latest?.gpuType ?? "") === gpuTypeFilter;
       const searchMatches = !needle || [machine.name, machine.ip, machine.platform, machine.owner, machine.location]
         .filter(Boolean)
@@ -364,6 +365,7 @@ export function App() {
         <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, IP, platform, owner, location" />
         <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
           <option value="all">All statuses</option>
+          <option value="not_ok">Not OK</option>
           <option value="ok">OK</option>
           <option value="degraded">Degraded</option>
           <option value="ssh_failed">SSH failed</option>
