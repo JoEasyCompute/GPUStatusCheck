@@ -14,8 +14,12 @@ npm run dev:client              # vite dev server on :5173 (proxies /api to :410
 python3 test_gpu_status_check.py  # Python CLI tests
 ```
 
-The operator usually runs the server detached:
+Locally the operator runs the server detached:
 `nohup npm start > .omx/dashboard-server.log 2>&1 &` on port 4100.
+Production runs on a remote host as the systemd service `gpustatuscheck`
+(deploy there: `git pull`, `npm run build` for client changes,
+`sudo systemctl restart gpustatuscheck` for server changes; logs via
+`journalctl -u gpustatuscheck`).
 Server-side changes need a server restart to take effect; client-only changes
 just need `npm run build` (static files are served from disk per request).
 
