@@ -878,6 +878,23 @@ tbody tr.group-charts-row:hover {
   color: var(--crit-ink);
 }
 
+.kernel-event-row {
+  display: grid;
+  font-size: 12.5px;
+  gap: 10px;
+  grid-template-columns: 130px minmax(0, 1fr);
+  padding: 5px 2px;
+}
+
+.kernel-event-row + .kernel-event-row {
+  border-top: 1px solid var(--hairline);
+}
+
+.chip.agent {
+  background: color-mix(in srgb, var(--series-3) 16%, transparent);
+  color: var(--ink-2);
+}
+
 .gpu-pill.clickable {
   cursor: pointer;
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { GpuProcess, MachineWithLatest, ProbeResult } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
@@ -35,6 +35,7 @@ export function MachineDetailModal({
           <h2>{machine.name}</h2>
           <span className={`status ${latest?.status ?? "unknown"}`}>{formatStatus(latest?.status)}</span>
           {machine.maintenance ? <span className="chip maintenance">maintenance</span> : null}
+          {latest?.agentVersion ? <span className="chip agent" title={`On-host agent v${latest.agentVersion} — buffered sampling active`}>agent</span> : null}
           <button className="ip-copy" title="Copy SSH command" onClick={() => void copySsh()}>
             {machine.ip}
           </button>
@@ -129,11 +130,13 @@ function DetailPane({ machine, history, processes, onSelectGpu }: { machine: Mac
         </div>
       </details>
 
+      {latest?.agentVersion ? <KernelEventsSection machineId={machine.id!} /> : null}
+
       <details className="detail-section">
         <summary>Probe history</summary>
         <div className="history-list">
           {history.length === 0 ? <p>No probe history recorded.</p> : null}
-          {history.slice(0, 20).map((entry, index) => (
+          {history.filter((entry) => entry.source !== "agent").slice(0, 20).map((entry, index) => (
             <div className="history-row" key={entry.id ?? `${entry.checkedAt}-${index}`}>
               <span className={`status ${entry.status}`}>{formatStatus(entry.status)}</span>
               <span>{formatTime(entry.checkedAt)}</span>
@@ -145,6 +148,40 @@ function DetailPane({ machine, history, processes, onSelectGpu }: { machine: Mac
         </div>
       </details>
     </aside>
+  );
+}
+
+function KernelEventsSection({ machineId }: { machineId: number }) {
+  const [events, setEvents] = useState<Array<{ id: number; eventAt: string; line: string }>>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/machines/${machineId}/kernel-events?hours=168&limit=100`)
+      .then((response) => response.json())
+      .then((next) => {
+        if (!cancelled && Array.isArray(next)) {
+          setEvents(next);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [machineId]);
+
+  return (
+    <details className="detail-section">
+      <summary>Kernel events (agent, 7d)</summary>
+      <div className="history-list">
+        {events.length === 0 ? <p>No kernel/GPU events captured by the agent.</p> : null}
+        {events.map((event) => (
+          <div className="kernel-event-row" key={event.id}>
+            <span className="time-cell">{formatTime(event.eventAt)}</span>
+            <span className="command">{event.line}</span>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 

@@ -21,6 +21,10 @@ export type AppConfig = {
   slackBotToken: string;
   slackChannelsPath: string;
   slackDryRun: boolean;
+  agentDrainEnabled: boolean;
+  agentDrainTimeoutSeconds: number;
+  agentDrainMaxLines: number;
+  agentRetentionDays: number;
   notifyRecovery: boolean;
   heartbeatUrl: string;
   host: string;
@@ -52,6 +56,10 @@ export function loadConfig(env = process.env): AppConfig {
     slackBotToken: value("SLACK_BOT_TOKEN") || "",
     slackChannelsPath: value("GPUCHECK_SLACK_CHANNELS") || "slack-channels.json",
     slackDryRun: boolEnv(value("GPUCHECK_SLACK_DRY_RUN"), false),
+    agentDrainEnabled: boolEnv(value("GPUCHECK_AGENT_DRAIN"), false),
+    agentDrainTimeoutSeconds: numberEnv(value("GPUCHECK_AGENT_DRAIN_TIMEOUT"), 120),
+    agentDrainMaxLines: numberEnv(value("GPUCHECK_AGENT_DRAIN_MAX_LINES"), 600),
+    agentRetentionDays: numberEnv(value("GPUCHECK_AGENT_RETENTION_DAYS"), 21),
     notifyRecovery: boolEnv(value("GPUCHECK_NOTIFY_RECOVERY"), false),
     heartbeatUrl: value("GPUCHECK_HEARTBEAT_URL") || "",
     host: value("GPUCHECK_HOST") || "127.0.0.1",

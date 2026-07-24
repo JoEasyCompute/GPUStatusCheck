@@ -1,0 +1,9 @@
+[Unit]
+Description=GPUStatusCheck on-host agent sample
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/local/bin/gpucheck-agent.sh
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=45

@@ -2,6 +2,7 @@ import type { Machine, PollStatus, ProbeResult } from "../shared/types";
 import { buildAlerts, formatAlertMessage, sendTelegramMessage, splitMessage, type AlertInput } from "./alerts";
 import type { AppConfig } from "./config";
 import type { DashboardDatabase } from "./db";
+import { ingestDrainBatch, makeDrainAgent, parseDrainOutput, type DrainAgent } from "./agent";
 import { detectGpuDrops } from "./gpuDrops";
 import { readInventoryFromFile } from "./inventory";
 import { runProbe } from "./probe";
@@ -68,6 +69,7 @@ export class PollScheduler {
     private readonly sendAlertChunk: SendAlertChunk = (chunk) =>
       sendTelegramMessage(config.telegramBotToken, config.telegramChatId, chunk),
     private readonly sendSlack: SendSlack = (post) => postSlack(config.slackBotToken, post),
+    private readonly drainAgent: DrainAgent = makeDrainAgent(config),
   ) {}
 
   start(): void {
@@ -175,6 +177,15 @@ export class PollScheduler {
           reason: result.busOffReason || result.sshError || "",
           muted: machine.maintenance === true,
         });
+        // Optional per-host agent: drain its spool while this worker still
+        // owns the machine, so `jobs` bounds total SSH concurrency. Hosts
+        // without the agent (no AGENT_VERSION) skip this entirely and keep
+        // the exact pre-agent workflow.
+        if (this.config.agentDrainEnabled && result.sshOk && result.agentVersion) {
+          await this.drainAndIngest(machine).catch((error) => {
+            console.error(`agent drain failed for ${machine.name}`, error);
+          });
+        }
       });
       this.db.finishPollRun(runId);
       try {
@@ -183,7 +194,7 @@ export class PollScheduler {
         console.error("gpu drop detection failed", error);
       }
       try {
-        const pruned = this.db.pruneHistory(this.config.retentionDays);
+        const pruned = this.db.pruneHistory(this.config.retentionDays, this.config.agentRetentionDays);
         if (pruned > 0) {
           console.log(`pruned ${pruned} history rows older than ${this.config.retentionDays} days`);
         }
@@ -245,6 +256,40 @@ export class PollScheduler {
       result.busOffReason = [result.busOffReason, `only ${result.gpuCount}/${expected} GPUs visible`]
         .filter(Boolean)
         .join("; ");
+    }
+  }
+
+  private async drainAndIngest(machine: Machine): Promise<void> {
+    const machineId = machine.id;
+    if (!machineId) {
+      return;
+    }
+    const watermark = this.db.getAgentState(machineId)?.lastIngestedAt ?? "";
+    const completed = await this.drainAgent(machine, watermark);
+    if (completed.code !== 0) {
+      this.db.upsertAgentState(machineId, { lastError: `drain ssh failed: ${(completed.stderr || completed.stdout).trim().slice(0, 200)}` });
+      return;
+    }
+    const output = parseDrainOutput(completed.stdout);
+    if (!output.spoolPresent) {
+      return;
+    }
+    if (!output.complete) {
+      // Truncated output (timeout mid-transfer / torn line): drop the batch
+      // and leave the watermark alone so the next poll retries it whole.
+      this.db.upsertAgentState(machineId, { lastError: "drain output truncated; batch discarded" });
+      return;
+    }
+    const skewMs = Math.abs(Date.parse(output.hostNow) - Date.now());
+    const ingest = ingestDrainBatch(this.db, machine, output, this.config.processArgsMaxChars);
+    this.db.upsertAgentState(machineId, {
+      lastIngestedAt: ingest.watermark,
+      lastDrainAt: new Date().toISOString(),
+      agentVersion: output.agentVersion,
+      lastError: Number.isFinite(skewMs) && skewMs > 120_000 ? `host clock skew ${Math.round(skewMs / 1000)}s` : "",
+    });
+    if (ingest.ingested > 0) {
+      console.log(`agent drain: ${machine.name} ingested ${ingest.ingested} samples (${ingest.duplicates} dup, ${ingest.skipped} skipped, ${ingest.kernelEvents} kernel events)`);
     }
   }
 

@@ -122,6 +122,7 @@ export function MachineTable({
               <td>
                 <span className={`status ${machine.latest?.status ?? "unknown"}`}>{formatStatus(machine.latest?.status)}</span>
                 {machine.maintenance ? <span className="chip maintenance" title="Alerts muted while in maintenance">M</span> : null}
+                {machine.latest?.agentVersion ? <span className="chip agent" title={`On-host agent v${machine.latest.agentVersion}`}>A</span> : null}
               </td>
               <td>{machine.location || "-"}</td>
               <td>{machine.owner || "-"}</td>

@@ -12,6 +12,12 @@ machine_name=${1:-unknown}
 machine_ip=${2:-unknown}
 check_logs=${3:-1}
 remote_host=$(hostname 2>/dev/null || echo unknown)
+
+# Read-only presence check for the optional on-host agent; hosts without it
+# behave exactly as before. The agent (scripts/agent/) is the one deliberate,
+# guarded exception to this script's no-disk-write rule.
+agent_version=""
+[ -r /var/lib/gpucheck-agent/VERSION ] && agent_version=$(cat /var/lib/gpucheck-agent/VERSION 2>/dev/null)
 uptime_pretty=$(uptime -p 2>/dev/null || uptime 2>/dev/null || echo unknown)
 
 nvidia_rc=127
@@ -212,6 +218,7 @@ echo "MEM_TOTAL_KB=$mem_total_kb"
 echo "MEM_USED_PCT=$mem_used_pct"
 echo "DISK_TOTAL_KB=$disk_total_kb"
 echo "DISK_USED_PCT=$disk_used_pct"
+echo "AGENT_VERSION=$agent_version"
 if [ -n "$kernel_hits" ]; then echo "BUS_OFF=1"; else echo "BUS_OFF=0"; fi
 
 printf 'NVIDIA_SMI_OUTPUT<<__GPUCHECK_EOF__\n'

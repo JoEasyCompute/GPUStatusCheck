@@ -26,6 +26,7 @@ function setup(options: { channelsJson?: string } = {}) {
     skipLogs: true, processArgsMaxChars: 512, pollOnStartup: false, retentionDays: 30,
     telegramBotToken: "", telegramChatId: "",
     slackBotToken: "xoxb-test", slackChannelsPath: channelsPath, slackDryRun: false,
+    agentDrainEnabled: false, agentDrainTimeoutSeconds: 120, agentDrainMaxLines: 600, agentRetentionDays: 21,
     notifyRecovery: false, heartbeatUrl: "", host: "127.0.0.1", port: 0,
   };
 

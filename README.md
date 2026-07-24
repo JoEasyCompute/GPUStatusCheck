@@ -23,7 +23,9 @@ For each machine, the probe:
 8. Prints a summary table and optionally JSON
 
 The probe writes nothing to the target host's disk, so it stays accurate even
-on machines with a full filesystem.
+on machines with a full filesystem. (The optional on-host agent below is the
+one deliberate exception: it keeps a small, bounded spool with a free-space
+guard so it can never contribute to filling a disk.)
 
 It can also run in a watch loop and send Telegram alerts when a machine
 changes from healthy to degraded or SSH-failed. Duplicate alerts are suppressed
@@ -253,6 +255,44 @@ History older than `GPUCHECK_RETENTION_DAYS` (default 30) is pruned from the
 SQLite database after each poll so it does not grow without bound. Each
 machine's most recent probe result is always kept, even if it is older than
 the retention window. Set `GPUCHECK_RETENTION_DAYS=0` to keep history forever.
+
+### On-host agent (optional, per machine)
+
+The SSH poll only sees a machine every 5 minutes, and an unreachable window
+leaves a permanent hole in history. The optional on-host agent closes both
+gaps: a systemd timer samples the same telemetry as the probe **every 60s**
+plus kernel/GPU log events (Xid, NVRM, bus-off, OOM) with exact timestamps,
+buffering everything in a bounded local spool
+(`/var/lib/gpucheck-agent/spool`, 200 MiB / 7 day caps, sampling pauses below
+1 GiB free disk). The dashboard drains the spool over the same SSH connection
+right after each successful probe and backfills the data — so an outage
+window fills itself in as soon as the host is reachable again.
+
+**The agent is optional per host and the SSH poll always keeps working.**
+Machines without the agent behave exactly as before; any mix is fine, forever.
+Machine status, alerting, and GPU drop detection stay driven by the live poll
+only — agent data enriches charts, per-GPU history, daily rollups, and the
+new per-machine "Kernel events" modal section.
+
+Install / upgrade / remove (needs passwordless sudo on the host; hosts
+without it are skipped and stay SSH-poll-only):
+
+```bash
+npm run agent:install -- --only <machine-name>   # pilot one host
+npm run agent:install                            # whole inventory CSV
+npm run agent:install -- --uninstall --only <machine-name>
+```
+
+Then enable draining on the server: `GPUCHECK_AGENT_DRAIN=1` in `.env` and
+restart. Machines running the agent show an "A" badge in the table. Settings:
+
+```bash
+GPUCHECK_AGENT_DRAIN=0              # master switch for draining (default off)
+GPUCHECK_AGENT_DRAIN_TIMEOUT=120    # seconds per drain exec
+GPUCHECK_AGENT_DRAIN_MAX_LINES=600  # samples per drain (~10h; backlogs catch up over polls)
+GPUCHECK_AGENT_RETENTION_DAYS=21    # 60s samples are ~12x volume, so shorter retention;
+                                    # daily per-GPU rollups still keep the long-term signal
+```
 
 ### Slack GPU drop announcements
 

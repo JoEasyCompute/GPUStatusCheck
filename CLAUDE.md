@@ -25,7 +25,10 @@ just need `npm run build` (static files are served from disk per request).
   remote hosts; both the CLI and `src/server/probe.ts` pipe it over
   `ssh <host> sh -s --`. It must never write to the target host's disk
   (a full-disk host once silently reported 0 GPUs via failed temp-file
-  writes); capture command output in shell variables only.
+  writes); capture command output in shell variables only. The optional
+  on-host agent (`scripts/agent/`) is the single deliberate exception to
+  that rule: it appends to a bounded spool guarded by a free-space check,
+  age cap, and total-size cap.
 - `src/server/` — Fastify app (`app.ts`), poll scheduler with Telegram
   alerting (`scheduler.ts`, `alerts.ts`), per-card GPU drop detection and
   Slack announcements (`gpuDrops.ts`, `slack.ts`), SQLite via better-sqlite3
@@ -48,6 +51,34 @@ in by `rollupGpuDailyStats()` before pruning so long-term per-card stats
 outlive `GPUCHECK_RETENTION_DAYS`). A machine's expected roster is every card
 whose *latest* sighting points at it (`listMachineRoster`) — moving a card
 updates its own sighting, so it leaves the old roster automatically.
+
+## On-host agent (optional per host)
+
+An installable agent (`scripts/agent/`, systemd timer, 60s oneshot samples)
+buffers probe-format records plus kernel/GPU log events in a bounded spool at
+`/var/lib/gpucheck-agent/`; the server drains it over SSH after each
+successful probe (`scripts/agent-drain.sh`, `src/server/agent.ts`) when
+`GPUCHECK_AGENT_DRAIN=1`. Invariants:
+
+- **The agent is optional per host and the SSH poll is never replaced.**
+  Detection is the presence of `/var/lib/gpucheck-agent/VERSION` (probe
+  scalar `AGENT_VERSION`); hosts without it follow the pre-agent workflow
+  exactly. A mixed fleet is the intended steady state.
+- Ingested samples become `probe_results` rows with `source='agent'` and
+  their real historical `checked_at`, anchored to synthetic
+  `status='agent'` poll_runs. They feed charts and per-GPU views only:
+  ingest never touches `gpus`/`gpu_sightings`/`gpu_down_events`/drop
+  incidents, and never drives alerting — the live poll owns state.
+  `listMachines`/summary/poll-run lists filter agent rows/runs out.
+- Re-drains are idempotent (partial unique index on
+  `(machine_id, checked_at) WHERE source='agent'`); a drain missing its
+  `AGENT_LINES_END` frame is discarded whole and the per-machine watermark
+  (`agent_state.last_ingested_at`) does not advance.
+- Backfill below the daily-rollup watermark triggers a targeted
+  `recomputeGpuDailyStats` for the touched (uuid, day)s.
+- `pruneHistory` keep-latest selects by `checked_at` among `source='probe'`
+  rows only, and agent rows age out on `GPUCHECK_AGENT_RETENTION_DAYS`
+  (shorter than the main retention; rollups carry the long-term signal).
 
 ## Behavior invariants
 

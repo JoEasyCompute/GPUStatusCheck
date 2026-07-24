@@ -4,6 +4,32 @@ import Database from "better-sqlite3";
 import type { FleetHistoryPoint, GpuDailyStat, GpuDownNote, GpuIdentity, GpuMetric, GpuProcess, GpuSighting, GroupHistoryPoint, Machine, MachineWithLatest, PollRun, ProbeResult, Summary } from "../shared/types";
 import type { DropIncident, RosterEntry } from "./gpuDrops";
 
+/** Shape insertAgentSample needs from a parsed agent record (a ParsedProbe). */
+export type ParsedAgentSample = {
+  remoteHost: string;
+  uptime: string;
+  nvidiaSmiRc: number | null;
+  gpuCount: number | null;
+  gpuType: string;
+  gpuJobs: string;
+  gpuPowerW: string;
+  gpuAvgTempC: string;
+  netRxBps: number | null;
+  netTxBps: number | null;
+  cpuModel: string;
+  cpuCores: number | null;
+  cpuUtilPct: number | null;
+  memTotalKb: number | null;
+  memUsedPct: number | null;
+  diskTotalKb: number | null;
+  diskUsedPct: number | null;
+  busOffSuspected: boolean;
+  kernelHits: string;
+  nvidiaSmiError: string;
+  processes: GpuProcess[];
+  gpuMetrics: GpuMetric[];
+};
+
 type Sqlite = Database.Database;
 
 export type DashboardDatabase = ReturnType<typeof createDatabase>;
@@ -144,6 +170,26 @@ export function createDatabase(dbPath: string) {
         UNIQUE(uuid, day)
       );
 
+      CREATE TABLE IF NOT EXISTS agent_kernel_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        machine_id INTEGER NOT NULL,
+        event_at TEXT NOT NULL,
+        boot_id TEXT,
+        line TEXT NOT NULL,
+        ingested_at TEXT NOT NULL,
+        UNIQUE(machine_id, event_at, line),
+        FOREIGN KEY(machine_id) REFERENCES machines(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_state (
+        machine_id INTEGER PRIMARY KEY,
+        last_ingested_at TEXT NOT NULL DEFAULT '',
+        last_drain_at TEXT NOT NULL DEFAULT '',
+        agent_version TEXT NOT NULL DEFAULT '',
+        last_error TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY(machine_id) REFERENCES machines(id)
+      );
+
       CREATE TABLE IF NOT EXISTS gpu_drop_incidents (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         machine_id INTEGER NOT NULL,
@@ -210,6 +256,8 @@ export function createDatabase(dbPath: string) {
     ensureColumn(db, "probe_results", "ssh_user", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "probe_results", "net_rx_bps", "REAL");
     ensureColumn(db, "probe_results", "net_tx_bps", "REAL");
+    ensureColumn(db, "probe_results", "source", "TEXT NOT NULL DEFAULT 'probe'");
+    ensureColumn(db, "probe_results", "agent_version", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "probe_results", "cpu_model", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "probe_results", "cpu_cores", "INTEGER");
     ensureColumn(db, "probe_results", "cpu_util_pct", "REAL");
@@ -233,6 +281,9 @@ export function createDatabase(dbPath: string) {
       CREATE INDEX IF NOT EXISTS idx_gpu_sightings_machine ON gpu_sightings(machine_id, gpu_index);
       CREATE INDEX IF NOT EXISTS idx_gpu_drop_incidents_machine ON gpu_drop_incidents(machine_id, closed_at);
       CREATE INDEX IF NOT EXISTS idx_gpu_drop_members_incident ON gpu_drop_members(incident_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_kernel_events_machine ON agent_kernel_events(machine_id, event_at);
+      CREATE INDEX IF NOT EXISTS idx_probe_results_machine_source_checked ON probe_results(machine_id, source, checked_at);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_probe_results_agent_sample ON probe_results(machine_id, checked_at) WHERE source = 'agent';
     `);
   }
 
@@ -289,12 +340,14 @@ export function createDatabase(dbPath: string) {
         poll_run_id, machine_id, checked_at, status, ssh_ok, ssh_error, ssh_user, remote_host, uptime,
         nvidia_smi_rc, gpu_count, gpu_type, gpu_jobs, gpu_power_w, gpu_avg_temp_c, net_rx_bps, net_tx_bps, bus_off_suspected,
         cpu_model, cpu_cores, cpu_util_pct, mem_total_kb, mem_used_pct, disk_total_kb, disk_used_pct,
+        source, agent_version,
         bus_off_reason, kernel_hits, nvidia_smi_output, nvidia_smi_error, duration_ms
       )
       VALUES (
         @pollRunId, @machineId, @checkedAt, @status, @sshOk, @sshError, @sshUser, @remoteHost, @uptime,
         @nvidiaSmiRc, @gpuCount, @gpuType, @gpuJobs, @gpuPowerW, @gpuAvgTempC, @netRxBps, @netTxBps, @busOffSuspected,
         @cpuModel, @cpuCores, @cpuUtilPct, @memTotalKb, @memUsedPct, @diskTotalKb, @diskUsedPct,
+        'probe', @agentVersion,
         @busOffReason, @kernelHits, @nvidiaSmiOutput, @nvidiaSmiError, @durationMs
       )
     `).run({
@@ -322,6 +375,7 @@ export function createDatabase(dbPath: string) {
       memUsedPct: result.memUsedPct ?? null,
       diskTotalKb: result.diskTotalKb ?? null,
       diskUsedPct: result.diskUsedPct ?? null,
+      agentVersion: result.agentVersion ?? "",
       busOffSuspected: result.busOffSuspected ? 1 : 0,
       busOffReason: result.busOffReason ?? "",
       kernelHits: result.kernelHits ?? "",
@@ -383,11 +437,12 @@ export function createDatabase(dbPath: string) {
       SELECT m.*, pr.id AS latest_id, pr.checked_at, pr.status, pr.ssh_ok, pr.ssh_error, pr.ssh_user, pr.remote_host,
              pr.uptime, pr.nvidia_smi_rc, pr.gpu_count, pr.gpu_type, pr.gpu_jobs, pr.gpu_power_w,
              pr.gpu_avg_temp_c, pr.net_rx_bps, pr.net_tx_bps, pr.bus_off_suspected, pr.bus_off_reason, pr.duration_ms,
-             pr.cpu_model, pr.cpu_cores, pr.cpu_util_pct, pr.mem_total_kb, pr.mem_used_pct, pr.disk_total_kb, pr.disk_used_pct
+             pr.cpu_model, pr.cpu_cores, pr.cpu_util_pct, pr.mem_total_kb, pr.mem_used_pct, pr.disk_total_kb, pr.disk_used_pct,
+             pr.source, pr.agent_version
       FROM machines m
       LEFT JOIN probe_results pr ON pr.id = (
         SELECT id FROM probe_results latest
-        WHERE latest.machine_id = m.id
+        WHERE latest.machine_id = m.id AND latest.source = 'probe'
         ORDER BY latest.checked_at DESC
         LIMIT 1
       )
@@ -405,11 +460,18 @@ export function createDatabase(dbPath: string) {
     const rows = since
       ? db.prepare("SELECT * FROM probe_results WHERE machine_id = ? AND checked_at >= ? ORDER BY checked_at DESC LIMIT ?").all(machineId, since, limit) as ProbeRow[]
       : db.prepare("SELECT * FROM probe_results WHERE machine_id = ? ORDER BY checked_at DESC LIMIT ?").all(machineId, limit) as ProbeRow[];
-    return rows.map((row) => enrichProbeResult(db, rowToProbeResult(row)));
+    return enrichProbeResults(db, rows.map(rowToProbeResult));
   }
 
+  /** Modal process list: probe rows only, or 60s agent samples would dilute
+   * the newest-200 window to minutes of coverage. */
   function listProcesses(machineId: number, limit = 200): GpuProcess[] {
-    const rows = db.prepare("SELECT * FROM gpu_processes WHERE machine_id = ? ORDER BY checked_at DESC, gpu_index ASC LIMIT ?").all(machineId, limit) as ProcessRow[];
+    const rows = db.prepare(`
+      SELECT p.* FROM gpu_processes p
+      JOIN probe_results r ON r.id = p.probe_result_id
+      WHERE p.machine_id = ? AND r.source = 'probe'
+      ORDER BY p.checked_at DESC, p.gpu_index ASC LIMIT ?
+    `).all(machineId, limit) as ProcessRow[];
     return rows.map(rowToProcess);
   }
 
@@ -418,8 +480,9 @@ export function createDatabase(dbPath: string) {
     return rows.map(rowToMetric);
   }
 
+  /** Synthetic status='agent' ingest runs are bookkeeping, not fleet polls. */
   function listPollRuns(limit = 50): PollRun[] {
-    const rows = db.prepare("SELECT * FROM poll_runs ORDER BY started_at DESC LIMIT ?").all(limit) as PollRunRow[];
+    const rows = db.prepare("SELECT * FROM poll_runs WHERE status != 'agent' ORDER BY started_at DESC LIMIT ?").all(limit) as PollRunRow[];
     return rows.map(rowToPollRun);
   }
 
@@ -788,26 +851,206 @@ export function createDatabase(dbPath: string) {
     return info.changes;
   }
 
-  function pruneHistory(retentionDays: number): number {
+  /** Synthetic run anchoring one drained agent batch; excluded from all poll lists. */
+  function createAgentRun(machineId: number, sampleCount: number, at: string): number {
+    const info = db.prepare(`
+      INSERT INTO poll_runs (started_at, finished_at, status, machine_count, ok_count, degraded_count, ssh_failed_count)
+      VALUES (?, ?, 'agent', 1, ?, 0, 0)
+    `).run(at, at, sampleCount);
+    return Number(info.lastInsertRowid);
+  }
+
+  /**
+   * One historical agent sample -> probe_results row (source='agent') plus
+   * children. Returns false when the (machine, checked_at) sample was already
+   * ingested (partial unique index), making re-drains idempotent. Never
+   * touches gpus / gpu_sightings / gpu_down_events / drop incidents: the live
+   * poll path owns state.
+   */
+  function insertAgentSample(pollRunId: number, machineId: number, checkedAt: string, parsed: ParsedAgentSample, agentVersion: string): boolean {
+    const reasons: string[] = [];
+    if (parsed.busOffSuspected) {
+      reasons.push("kernel/log indicators");
+    }
+    if (parsed.nvidiaSmiRc !== null && parsed.nvidiaSmiRc !== 0) {
+      reasons.push(`nvidia-smi rc=${parsed.nvidiaSmiRc}`);
+    }
+    if (parsed.nvidiaSmiRc === 0 && parsed.gpuCount !== null && parsed.gpuCount < 1) {
+      reasons.push("nvidia-smi reported zero GPUs");
+    }
+    const info = db.prepare(`
+      INSERT OR IGNORE INTO probe_results (
+        poll_run_id, machine_id, checked_at, status, ssh_ok, ssh_error, ssh_user, remote_host, uptime,
+        nvidia_smi_rc, gpu_count, gpu_type, gpu_jobs, gpu_power_w, gpu_avg_temp_c, net_rx_bps, net_tx_bps, bus_off_suspected,
+        cpu_model, cpu_cores, cpu_util_pct, mem_total_kb, mem_used_pct, disk_total_kb, disk_used_pct,
+        source, agent_version, bus_off_reason, kernel_hits, nvidia_smi_output, nvidia_smi_error, duration_ms
+      ) VALUES (
+        @pollRunId, @machineId, @checkedAt, @status, 1, '', '', @remoteHost, @uptime,
+        @nvidiaSmiRc, @gpuCount, @gpuType, @gpuJobs, @gpuPowerW, @gpuAvgTempC, @netRxBps, @netTxBps, @busOffSuspected,
+        @cpuModel, @cpuCores, @cpuUtilPct, @memTotalKb, @memUsedPct, @diskTotalKb, @diskUsedPct,
+        'agent', @agentVersion, @busOffReason, @kernelHits, '', @nvidiaSmiError, NULL
+      )
+    `).run({
+      pollRunId,
+      machineId,
+      checkedAt,
+      status: reasons.length > 0 ? "degraded" : "ok",
+      remoteHost: parsed.remoteHost,
+      uptime: parsed.uptime,
+      nvidiaSmiRc: parsed.nvidiaSmiRc,
+      gpuCount: parsed.gpuCount,
+      gpuType: parsed.gpuType,
+      gpuJobs: parsed.gpuJobs,
+      gpuPowerW: parseNullableNumber(parsed.gpuPowerW),
+      gpuAvgTempC: parseNullableNumber(parsed.gpuAvgTempC),
+      netRxBps: parsed.netRxBps,
+      netTxBps: parsed.netTxBps,
+      busOffSuspected: parsed.busOffSuspected ? 1 : 0,
+      cpuModel: parsed.cpuModel,
+      cpuCores: parsed.cpuCores,
+      cpuUtilPct: parsed.cpuUtilPct,
+      memTotalKb: parsed.memTotalKb,
+      memUsedPct: parsed.memUsedPct,
+      diskTotalKb: parsed.diskTotalKb,
+      diskUsedPct: parsed.diskUsedPct,
+      agentVersion,
+      busOffReason: reasons.join("; "),
+      kernelHits: parsed.kernelHits,
+      nvidiaSmiError: parsed.nvidiaSmiError,
+    });
+    if (info.changes === 0) {
+      return false;
+    }
+    const probeResultId = Number(info.lastInsertRowid);
+    for (const process of parsed.processes) {
+      insertProcessRow(db, pollRunId, machineId, probeResultId, checkedAt, process);
+    }
+    for (const metric of parsed.gpuMetrics) {
+      insertMetricRow(db, pollRunId, machineId, probeResultId, checkedAt, metric);
+    }
+    return true;
+  }
+
+  /** Returns 1 when stored, 0 when the UNIQUE(machine, event_at, line) dedupe hit. */
+  function insertAgentKernelEvent(machineId: number, rawLine: string, ingestedAt: string): number {
+    const space = rawLine.indexOf(" ");
+    const first = space > 0 ? rawLine.slice(0, space) : "";
+    const parsedTs = Date.parse(first);
+    const eventAt = Number.isFinite(parsedTs) ? new Date(parsedTs).toISOString() : ingestedAt;
+    const info = db.prepare(`
+      INSERT OR IGNORE INTO agent_kernel_events (machine_id, event_at, boot_id, line, ingested_at)
+      VALUES (?, ?, NULL, ?, ?)
+    `).run(machineId, eventAt, rawLine, ingestedAt);
+    return info.changes;
+  }
+
+  function listKernelEvents(machineId: number, limit = 200, since?: string): Array<{ id: number; eventAt: string; line: string }> {
+    const rows = since
+      ? db.prepare("SELECT id, event_at, line FROM agent_kernel_events WHERE machine_id = ? AND event_at >= ? ORDER BY event_at DESC LIMIT ?").all(machineId, since, limit)
+      : db.prepare("SELECT id, event_at, line FROM agent_kernel_events WHERE machine_id = ? ORDER BY event_at DESC LIMIT ?").all(machineId, limit);
+    return (rows as Array<{ id: number; event_at: string; line: string }>).map((row) => ({ id: row.id, eventAt: row.event_at, line: row.line }));
+  }
+
+  function getAgentState(machineId: number): { lastIngestedAt: string; lastDrainAt: string; agentVersion: string; lastError: string } | undefined {
+    const row = db.prepare("SELECT * FROM agent_state WHERE machine_id = ?").get(machineId) as
+      | { last_ingested_at: string; last_drain_at: string; agent_version: string; last_error: string }
+      | undefined;
+    return row
+      ? { lastIngestedAt: row.last_ingested_at, lastDrainAt: row.last_drain_at, agentVersion: row.agent_version, lastError: row.last_error }
+      : undefined;
+  }
+
+  function upsertAgentState(machineId: number, updates: { lastIngestedAt?: string; lastDrainAt?: string; agentVersion?: string; lastError?: string }): void {
+    db.prepare(`
+      INSERT INTO agent_state (machine_id, last_ingested_at, last_drain_at, agent_version, last_error)
+      VALUES (@machineId, @lastIngestedAt, @lastDrainAt, @agentVersion, @lastError)
+      ON CONFLICT(machine_id) DO UPDATE SET
+        last_ingested_at = CASE WHEN excluded.last_ingested_at != '' THEN excluded.last_ingested_at ELSE agent_state.last_ingested_at END,
+        last_drain_at = CASE WHEN excluded.last_drain_at != '' THEN excluded.last_drain_at ELSE agent_state.last_drain_at END,
+        agent_version = CASE WHEN excluded.agent_version != '' THEN excluded.agent_version ELSE agent_state.agent_version END,
+        last_error = excluded.last_error
+    `).run({
+      machineId,
+      lastIngestedAt: updates.lastIngestedAt ?? "",
+      lastDrainAt: updates.lastDrainAt ?? "",
+      agentVersion: updates.agentVersion ?? "",
+      lastError: updates.lastError ?? "",
+    });
+  }
+
+  function getGpuDailyStatsWatermark(): string | null {
+    return (db.prepare("SELECT MAX(day) AS day FROM gpu_daily_stats").get() as { day: string | null }).day;
+  }
+
+  /**
+   * Recomputes daily rollups for specific (uuid, day) pairs after backfill
+   * lands below the rollup watermark — the normal watermarked rollup would
+   * otherwise never revisit those finalized days and the samples would be
+   * missing from long-term stats forever. Never advances the watermark:
+   * only existing (or explicitly named) days are recomputed.
+   */
+  function recomputeGpuDailyStats(days: string[], uuids: string[]): number {
+    if (days.length === 0 || uuids.length === 0) {
+      return 0;
+    }
+    let changes = 0;
+    const dayPlaceholders = uuids.map(() => "?").join(",");
+    const statement = db.prepare(`
+      INSERT INTO gpu_daily_stats (uuid, day, sample_count, avg_gpu_util, max_gpu_util, avg_temp_c, max_temp_c, avg_power_w, max_power_w)
+      SELECT uuid, substr(checked_at, 1, 10) AS day, COUNT(*),
+             AVG(gpu_util), MAX(gpu_util), AVG(temp_c), MAX(temp_c), AVG(power_w), MAX(power_w)
+      FROM gpu_metrics
+      WHERE uuid IN (${dayPlaceholders}) AND checked_at >= ? AND checked_at < ?
+      GROUP BY uuid, day
+      ON CONFLICT(uuid, day) DO UPDATE SET
+        sample_count = excluded.sample_count,
+        avg_gpu_util = excluded.avg_gpu_util,
+        max_gpu_util = excluded.max_gpu_util,
+        avg_temp_c = excluded.avg_temp_c,
+        max_temp_c = excluded.max_temp_c,
+        avg_power_w = excluded.avg_power_w,
+        max_power_w = excluded.max_power_w
+    `);
+    for (const day of days) {
+      changes += statement.run(...uuids, `${day}T00:00:00`, `${day}T24:00:00`).changes;
+    }
+    return changes;
+  }
+
+  function pruneHistory(retentionDays: number, agentRetentionDays = retentionDays): number {
     rollupGpuDailyStats();
     if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
       return 0;
     }
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
-    const prune = db.transaction((cutoffIso: string): number => {
+    const agentDays = Number.isFinite(agentRetentionDays) && agentRetentionDays > 0
+      ? Math.min(agentRetentionDays, retentionDays)
+      : retentionDays;
+    const agentCutoff = new Date(Date.now() - agentDays * 24 * 60 * 60 * 1000).toISOString();
+    const prune = db.transaction((cutoffIso: string, agentCutoffIso: string): number => {
       let deleted = 0;
-      // Each machine's most recent probe row survives regardless of age, so a
-      // long-unreachable machine keeps showing its last known state instead of
-      // reverting to "unknown".
-      const keepLatest = "SELECT MAX(id) FROM probe_results GROUP BY machine_id";
+      // Each machine's most recent *live probe* row survives regardless of age,
+      // so a long-unreachable machine keeps showing its last known state.
+      // Selected by checked_at (bare-column-with-MAX), not MAX(id): agent
+      // backfill inserts old-by-time rows with high rowids, so id order and
+      // time order diverge.
+      const keepLatest = "SELECT id FROM (SELECT id, MAX(checked_at) FROM probe_results WHERE source = 'probe' GROUP BY machine_id)";
+      // Agent samples age out on their own (usually shorter) clock; no
+      // keep-latest applies to them since the probe row carries current state.
+      deleted += db.prepare(`DELETE FROM gpu_processes WHERE probe_result_id IN (SELECT id FROM probe_results WHERE source = 'agent' AND checked_at < ?)`).run(agentCutoffIso).changes;
+      deleted += db.prepare(`DELETE FROM gpu_metrics WHERE probe_result_id IN (SELECT id FROM probe_results WHERE source = 'agent' AND checked_at < ?)`).run(agentCutoffIso).changes;
+      deleted += db.prepare(`DELETE FROM probe_results WHERE source = 'agent' AND checked_at < ?`).run(agentCutoffIso).changes;
       deleted += db.prepare(`DELETE FROM gpu_processes WHERE checked_at < ? AND probe_result_id NOT IN (${keepLatest})`).run(cutoffIso).changes;
       deleted += db.prepare(`DELETE FROM gpu_metrics WHERE checked_at < ? AND probe_result_id NOT IN (${keepLatest})`).run(cutoffIso).changes;
       deleted += db.prepare(`DELETE FROM probe_results WHERE checked_at < ? AND id NOT IN (${keepLatest})`).run(cutoffIso).changes;
+      // Emptied runs (incl. synthetic agent ingest runs) fall out once aged.
       deleted += db.prepare("DELETE FROM poll_runs WHERE started_at < ? AND id NOT IN (SELECT DISTINCT poll_run_id FROM probe_results)").run(cutoffIso).changes;
       deleted += db.prepare("DELETE FROM gpu_down_events WHERE recovered_at IS NOT NULL AND recovered_at < ?").run(cutoffIso).changes;
+      // Kernel events keep the long retention: they are the outage forensics.
+      deleted += db.prepare("DELETE FROM agent_kernel_events WHERE event_at < ?").run(cutoffIso).changes;
       return deleted;
     });
-    return prune(cutoff);
+    return prune(cutoff, agentCutoff);
   }
 
   function close(): void {
@@ -848,6 +1091,14 @@ export function createDatabase(dbPath: string) {
     markRecoveryAnnounced,
     markAllRecoveredAnnounced,
     rollupGpuDailyStats,
+    recomputeGpuDailyStats,
+    createAgentRun,
+    insertAgentSample,
+    insertAgentKernelEvent,
+    listKernelEvents,
+    getAgentState,
+    upsertAgentState,
+    getGpuDailyStatsWatermark,
     pruneHistory,
     close,
   };
@@ -978,6 +1229,8 @@ type ProbeRow = {
   kernel_hits: string;
   nvidia_smi_output: string;
   nvidia_smi_error: string;
+  source: string;
+  agent_version: string;
   duration_ms: number | null;
 };
 
@@ -1093,6 +1346,8 @@ function rowToMachineWithLatest(row: LatestMachineRow, db: Sqlite): MachineWithL
       mem_used_pct: row.mem_used_pct ?? null,
       disk_total_kb: row.disk_total_kb ?? null,
       disk_used_pct: row.disk_used_pct ?? null,
+      source: row.source ?? "probe",
+      agent_version: row.agent_version ?? "",
       bus_off_suspected: row.bus_off_suspected ?? 0,
       bus_off_reason: row.bus_off_reason ?? "",
       kernel_hits: "",
@@ -1212,6 +1467,37 @@ function enrichProbeResult(db: Sqlite, result: ProbeResult): ProbeResult {
   return result;
 }
 
+/**
+ * Batched variant for history lists: two IN(...) queries total instead of two
+ * per row, which matters once 60s agent samples make a 24h window ~1700 rows.
+ */
+function enrichProbeResults(db: Sqlite, results: ProbeResult[]): ProbeResult[] {
+  const ids = results.map((result) => result.id).filter((id): id is number => typeof id === "number");
+  if (ids.length === 0) {
+    return results;
+  }
+  const placeholders = ids.map(() => "?").join(",");
+  const processesByProbe = new Map<number, GpuProcess[]>();
+  for (const row of db.prepare(`SELECT * FROM gpu_processes WHERE probe_result_id IN (${placeholders}) ORDER BY gpu_index ASC, pid ASC`).all(...ids) as ProcessRow[]) {
+    const list = processesByProbe.get(row.probe_result_id) ?? [];
+    list.push(rowToProcess(row));
+    processesByProbe.set(row.probe_result_id, list);
+  }
+  const metricsByProbe = new Map<number, GpuMetric[]>();
+  for (const row of db.prepare(`SELECT * FROM gpu_metrics WHERE probe_result_id IN (${placeholders}) ORDER BY gpu_index ASC`).all(...ids) as MetricRow[]) {
+    const list = metricsByProbe.get(row.probe_result_id) ?? [];
+    list.push(rowToMetric(row));
+    metricsByProbe.set(row.probe_result_id, list);
+  }
+  for (const result of results) {
+    if (result.id) {
+      result.processes = processesByProbe.get(result.id) ?? [];
+      result.gpuMetrics = metricsByProbe.get(result.id) ?? [];
+    }
+  }
+  return results;
+}
+
 function rowToProbeResult(row: ProbeRow): ProbeResult {
   return {
     id: row.id,
@@ -1246,6 +1532,8 @@ function rowToProbeResult(row: ProbeRow): ProbeResult {
     nvidiaSmiOutput: row.nvidia_smi_output,
     nvidiaSmiError: row.nvidia_smi_error,
     status: row.status,
+    source: row.source === "agent" ? "agent" : "probe",
+    agentVersion: row.agent_version ?? "",
     durationMs: row.duration_ms ?? undefined,
   };
 }

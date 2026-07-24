@@ -26,6 +26,7 @@ export type ParsedProbe = {
   memUsedPct: number | null;
   diskTotalKb: number | null;
   diskUsedPct: number | null;
+  agentVersion: string;
   busOffSuspected: boolean;
   nvidiaSmiOutput: string;
   nvidiaSmiError: string;
@@ -71,6 +72,7 @@ export function parseProbeOutput(stdout: string, processArgsMaxChars: number): P
     memUsedPct: numericScalar(stdout, "MEM_USED_PCT"),
     diskTotalKb: numericScalar(stdout, "DISK_TOTAL_KB"),
     diskUsedPct: numericScalar(stdout, "DISK_USED_PCT"),
+    agentVersion: scalar(stdout, "AGENT_VERSION") ?? "",
     busOffSuspected,
     nvidiaSmiOutput: block(stdout, "NVIDIA_SMI_OUTPUT"),
     nvidiaSmiError: block(stdout, "NVIDIA_SMI_ERROR"),
@@ -199,21 +201,7 @@ async function runProbeAs(machine: Machine, options: RunProbeOptions, user: stri
   const sshPort = machine.sshPort ?? 22;
   const sshTarget = `${user}@${sshHost}`;
   const args = [
-    "-i",
-    options.keyPath,
-    "-p",
-    String(sshPort),
-    "-o",
-    "BatchMode=yes",
-    "-o",
-    `ConnectTimeout=${options.connectTimeoutSeconds}`,
-    "-o",
-    "ServerAliveInterval=5",
-    "-o",
-    "ServerAliveCountMax=1",
-    "-o",
-    "StrictHostKeyChecking=accept-new",
-    sshTarget,
+    ...buildSshArgs({ keyPath: options.keyPath, port: sshPort, connectTimeoutSeconds: options.connectTimeoutSeconds, target: sshTarget }),
     "sh -s --",
     machine.name,
     machine.ip,
@@ -273,6 +261,7 @@ async function runProbeAs(machine: Machine, options: RunProbeOptions, user: stri
       memUsedPct: parsed.memUsedPct,
       diskTotalKb: parsed.diskTotalKb,
       diskUsedPct: parsed.diskUsedPct,
+      agentVersion: parsed.agentVersion,
       busOffSuspected: parsed.busOffSuspected,
       busOffReason: reasons.join("; "),
       nvidiaSmiOutput: parsed.nvidiaSmiOutput,
@@ -292,6 +281,27 @@ async function runProbeAs(machine: Machine, options: RunProbeOptions, user: stri
       durationMs: Date.now() - start,
     };
   }
+}
+
+/** One place builds the ssh argv so probe, spool drain, and installer stay identical. */
+export function buildSshArgs(input: { keyPath: string; port: number; connectTimeoutSeconds: number; target: string }): string[] {
+  return [
+    "-i",
+    input.keyPath,
+    "-p",
+    String(input.port),
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    `ConnectTimeout=${input.connectTimeoutSeconds}`,
+    "-o",
+    "ServerAliveInterval=5",
+    "-o",
+    "ServerAliveCountMax=1",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    input.target,
+  ];
 }
 
 export function buildRemoteScript(): string {
@@ -375,7 +385,7 @@ function cleanToken(value: string | undefined): string {
   return value === undefined || value === "-" ? "" : value;
 }
 
-function spawnWithInput(command: string, args: string[], input: string, timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
+export function spawnWithInput(command: string, args: string[], input: string, timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";

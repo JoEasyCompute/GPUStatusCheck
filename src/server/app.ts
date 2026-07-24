@@ -93,7 +93,16 @@ export function buildApp(options: BuildAppOptions) {
     const since = Number.isFinite(hours) && hours > 0
       ? new Date(Date.now() - Math.min(hours, 24 * 30) * 60 * 60 * 1000).toISOString()
       : undefined;
-    return options.db.listHistory(Number(request.params.id), parseLimit(request.query.limit, 200), since);
+    // Higher cap than other routes: 24h of 60s agent samples plus 5-min polls
+    // is ~1730 rows, and truncation would silently clip the oldest hours.
+    return options.db.listHistory(Number(request.params.id), parseLimit(request.query.limit, 200, 3000), since);
+  });
+  app.get<{ Params: { id: string }; Querystring: { limit?: string; hours?: string } }>("/api/machines/:id/kernel-events", async (request) => {
+    const hours = Number(request.query.hours);
+    const since = Number.isFinite(hours) && hours > 0
+      ? new Date(Date.now() - Math.min(hours, 24 * 90) * 60 * 60 * 1000).toISOString()
+      : undefined;
+    return options.db.listKernelEvents(Number(request.params.id), parseLimit(request.query.limit, 200), since);
   });
   app.get<{ Params: { id: string }; Querystring: { limit?: string } }>("/api/machines/:id/processes", async (request) =>
     options.db.listProcesses(Number(request.params.id), parseLimit(request.query.limit, 200)),
@@ -171,7 +180,7 @@ export function buildApp(options: BuildAppOptions) {
   return app;
 }
 
-function parseLimit(value: string | undefined, fallback: number): number {
+function parseLimit(value: string | undefined, fallback: number, cap = 1000): number {
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 1000) : fallback;
+  return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, cap) : fallback;
 }

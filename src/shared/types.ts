@@ -157,6 +157,9 @@ export type ProbeResult = {
   nvidiaSmiError?: string;
   kernelHits?: string;
   status: "ok" | "degraded" | "ssh_failed" | "unknown";
+  /** 'probe' = live SSH poll; 'agent' = backfilled on-host agent sample. */
+  source?: "probe" | "agent";
+  agentVersion?: string;
   durationMs?: number;
   processes?: GpuProcess[];
   gpuMetrics?: GpuMetric[];
@@ -166,7 +169,7 @@ export type PollRun = {
   id: number;
   startedAt: string;
   finishedAt?: string;
-  status: "running" | "complete" | "failed";
+  status: "running" | "complete" | "failed" | "agent";
   machineCount: number;
   okCount: number;
   degradedCount: number;
