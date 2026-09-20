@@ -211,7 +211,26 @@ export type RuntimeConfig = {
   skipLogs: boolean;
   processArgsMaxChars: number;
   pollOnStartup: boolean;
+  minFreeDiskBytes: number;
   port: number;
+};
+
+export type StorageHealth = {
+  databaseBytes: number | null;
+  freeDiskBytes: number | null;
+  minimumFreeDiskBytes: number;
+  error?: string;
+};
+
+export type HealthStatus = {
+  ok: boolean;
+  polling: boolean;
+  lastPollFinishedAt: string | null;
+  secondsSinceLastPoll: number;
+  staleAfterSeconds: number;
+  lastError: string;
+  reasons: string[];
+  storage: StorageHealth;
 };
 
 export type EditableRuntimeConfig = {

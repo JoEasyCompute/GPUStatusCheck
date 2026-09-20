@@ -2,22 +2,26 @@ import fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { EditableRuntimeConfig, RuntimeConfig } from "../shared/types";
+import type { EditableRuntimeConfig, HealthStatus, RuntimeConfig, StorageHealth } from "../shared/types";
 import type { AppConfig } from "./config";
 import { writeEnvSettings } from "./config";
 import type { DashboardDatabase } from "./db";
 import { readInventoryFromFile } from "./inventory";
 import { PollFailedError, PollScheduler, type ProbeMachine } from "./scheduler";
+import { readStorageHealth } from "./storageHealth";
 
 export type BuildAppOptions = {
   db: DashboardDatabase;
   config: AppConfig;
   probeMachine?: ProbeMachine;
+  storageHealthProvider?: () => Promise<StorageHealth>;
 };
 
 export function buildApp(options: BuildAppOptions) {
   const app = fastify({ logger: false });
   const scheduler = new PollScheduler(options.db, options.config, options.probeMachine);
+  const storageHealthProvider = options.storageHealthProvider
+    ?? (() => readStorageHealth(options.config.dbPath, options.config.minFreeDiskBytes));
   const runtimeConfig = (): RuntimeConfig => ({
     machinesPath: options.config.machinesPath,
     dbPath: options.config.dbPath,
@@ -28,16 +32,25 @@ export function buildApp(options: BuildAppOptions) {
     skipLogs: options.config.skipLogs,
     processArgsMaxChars: options.config.processArgsMaxChars,
     pollOnStartup: options.config.pollOnStartup,
+    minFreeDiskBytes: options.config.minFreeDiskBytes,
     port: options.config.port,
   });
 
   const startedAt = Date.now();
-  app.get("/api/health", async (_request, reply) => {
+  app.get("/api/health", async (_request, reply): Promise<HealthStatus> => {
     const status = scheduler.getStatus();
     const lastPollAt = status.lastFinishedAt ? Date.parse(status.lastFinishedAt) : startedAt;
     const secondsSinceLastPoll = Math.floor((Date.now() - lastPollAt) / 1000);
     const staleAfterSeconds = Math.max(900, status.pollIntervalSeconds * 3);
-    const ok = secondsSinceLastPoll <= staleAfterSeconds;
+    const storage = await storageHealthProvider();
+    const reasons: string[] = [];
+    if (secondsSinceLastPoll > staleAfterSeconds) {
+      reasons.push("stale_poll");
+    }
+    if (storage.freeDiskBytes !== null && storage.freeDiskBytes < storage.minimumFreeDiskBytes) {
+      reasons.push("low_disk_space");
+    }
+    const ok = reasons.length === 0;
     if (!ok) {
       reply.code(503);
     }
@@ -48,6 +61,8 @@ export function buildApp(options: BuildAppOptions) {
       secondsSinceLastPoll,
       staleAfterSeconds,
       lastError: status.lastError,
+      reasons,
+      storage,
     };
   });
   app.get("/api/config", async (): Promise<RuntimeConfig> => runtimeConfig());

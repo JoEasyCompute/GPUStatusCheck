@@ -16,6 +16,7 @@ export type AppConfig = {
   processArgsMaxChars: number;
   pollOnStartup: boolean;
   retentionDays: number;
+  minFreeDiskBytes: number;
   telegramBotToken: string;
   telegramChatId: string;
   slackBotToken: string;
@@ -51,6 +52,7 @@ export function loadConfig(env = process.env): AppConfig {
     processArgsMaxChars: numberEnv(value("GPUCHECK_PROCESS_ARGS_MAX_CHARS"), 512),
     pollOnStartup: !boolEnv(value("GPUCHECK_DISABLE_STARTUP_POLL"), false),
     retentionDays: numberEnv(value("GPUCHECK_RETENTION_DAYS"), 30),
+    minFreeDiskBytes: numberEnv(value("GPUCHECK_MIN_FREE_DISK_BYTES"), 5 * 1024 ** 3),
     telegramBotToken: value("TELEGRAM_BOT_TOKEN") || "",
     telegramChatId: value("TELEGRAM_CHAT_ID") || "",
     slackBotToken: value("SLACK_BOT_TOKEN") || "",

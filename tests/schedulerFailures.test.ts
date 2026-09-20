@@ -64,6 +64,7 @@ function makeConfig(csvPath: string, dir: string): AppConfig {
     processArgsMaxChars: 512,
     pollOnStartup: false,
     retentionDays: 30,
+    minFreeDiskBytes: 5 * 1024 ** 3,
     telegramBotToken: "",
     telegramChatId: "",
     slackBotToken: "",
