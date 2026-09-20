@@ -63,4 +63,23 @@ describe("storage health", () => {
       error: "statfs denied",
     });
   });
+
+  it("does not fall back to an ancestor filesystem after a non-missing-path error", async () => {
+    const health = await readStorageHealth("/mounted/db.sqlite", 5_000, {
+      stat: async () => ({ size: 4_096 }),
+      statfs: async (path) => {
+        if (path !== "/") {
+          throw Object.assign(new Error("mounted filesystem I/O error"), { code: "EIO" });
+        }
+        return { bavail: 100_000, bsize: 4_096 };
+      },
+    });
+
+    expect(health).toEqual({
+      databaseBytes: 4_096,
+      freeDiskBytes: null,
+      minimumFreeDiskBytes: 5_000,
+      error: "mounted filesystem I/O error",
+    });
+  });
 });

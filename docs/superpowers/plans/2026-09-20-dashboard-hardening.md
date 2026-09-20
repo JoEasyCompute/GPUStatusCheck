@@ -415,7 +415,7 @@ Provide commands based on SQLite's online `.backup` command, checksum/size verif
 
 - [ ] **Step 3: Document compaction and rollback constraints**
 
-State that in-place `VACUUM` is forbidden at the current free-space level. Require a separate destination with verified capacity, `PRAGMA integrity_check`, a stopped service for the final atomic swap, retention of the original database, and endpoint verification after restart.
+State that in-place `VACUUM` is forbidden at the current free-space level. Require a separate destination with verified capacity, stop every database writer before producing the final `VACUUM INTO` copy, keep writers stopped through `PRAGMA integrity_check` and promotion, retain the original database, and verify endpoints before restarting normal operation.
 
 - [ ] **Step 4: Document the accepted access risk**
 

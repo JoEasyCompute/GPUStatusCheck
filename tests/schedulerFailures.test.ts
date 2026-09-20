@@ -8,6 +8,38 @@ import { PollScheduler } from "../src/server/scheduler";
 import type { Machine, ProbeResult } from "../src/shared/types";
 
 describe("poll failure handling", () => {
+  it("runs a queued poll after the active poll fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-scheduler-queued-failure-"));
+    const csvPath = join(dir, "machines.csv");
+    writeFileSync(csvPath, "name,ip\nalpha,10.0.0.1\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    const firstStarted = deferred<void>();
+    const releaseFirst = deferred<void>();
+    let calls = 0;
+    const scheduler = new PollScheduler(db, makeConfig(csvPath, dir), async (machine) => {
+      calls += 1;
+      if (calls === 1) {
+        firstStarted.resolve();
+        await releaseFirst.promise;
+        throw new Error("first poll failed");
+      }
+      return okResult(machine);
+    });
+
+    const failedPoll = scheduler.pollOnce();
+    await firstStarted.promise;
+    scheduler.pollSoon();
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseFirst.resolve();
+
+    await expect(failedPoll).rejects.toMatchObject({ message: "first poll failed" });
+    await expect.poll(() => calls).toBe(2);
+    await expect.poll(() => scheduler.getStatus().running).toBe(false);
+    expect(scheduler.getStatus().lastError).toBe("");
+    db.close();
+  });
+
   it("keeps the polling lock until sibling workers settle after a failure", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-scheduler-failure-"));
     const csvPath = join(dir, "machines.csv");

@@ -42,9 +42,11 @@ client can trigger polls, toggle maintenance, and update exposed settings.
 - Never run in-place `VACUUM` when free space is tight. Compaction requires a
   separately approved maintenance window and `VACUUM INTO` a destination with
   verified capacity.
-- Stop `gpustatuscheck` only for the final database swap. Keep the verified
-  original database off the root filesystem until the replacement passes local
-  health plus representative machine, history, and GPU API checks.
+- Stop `gpustatuscheck` and every other database writer before creating the
+  final `VACUUM INTO` copy, and keep them stopped through verification and the
+  swap. Keep the verified original database off the root filesystem until the
+  replacement passes local health plus representative machine, history, and
+  GPU API checks.
 - Roll back by stopping the service, restoring the verified original database,
   restarting, and checking `/api/health` before reopening normal operations.
 

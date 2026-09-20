@@ -318,15 +318,16 @@ curl --fail --show-error http://127.0.0.1:4100/api/health
 
 Freed pages are reused by future inserts even though the file remains the same
 size. Physical compaction is a separate maintenance operation requiring
-explicit approval. Compact only to a separate destination with verified
-capacity using `VACUUM INTO`, run `PRAGMA integrity_check` on that copy, and
-record its checksum and size. During the maintenance window, stop the service,
-copy the original database and any WAL/SHM files to the backup filesystem,
-remove the originals only after that copy is verified, copy the compacted
+explicit approval. At the start of that maintenance window, stop the service
+and every other process that can write the database; keep all writers stopped
+while creating the final `VACUUM INTO` copy, running `PRAGMA integrity_check`,
+recording its checksum, and promoting it. Copy the original database and any
+WAL/SHM files to the backup filesystem, verify that copy, then remove the root
+filesystem originals only after the backup is proven. Copy the compacted
 database to `data/gpu-status.sqlite.next`, verify it again, and rename it to
-`data/gpu-status.sqlite`. Restart and verify health and representative machine,
-history, and GPU endpoints. Roll back by stopping the service and restoring the
-verified original database from the backup filesystem.
+`data/gpu-status.sqlite`. Restart writers only after the new database passes
+health plus representative machine, history, and GPU endpoint checks. Roll back
+by keeping writers stopped and restoring the verified original database.
 
 ### On-host agent (optional, per machine)
 

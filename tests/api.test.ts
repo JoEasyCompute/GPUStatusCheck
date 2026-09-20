@@ -184,6 +184,68 @@ describe("api", () => {
     db.close();
   });
 
+  it("preserves the run id when recording a failed run also fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-api-failed-finalization-"));
+    const csvPath = join(dir, "machines.csv");
+    writeFileSync(csvPath, "name,ip\nalpha,10.0.0.1\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    const failingDb = {
+      ...db,
+      finishPollRun(runId: number, error?: string) {
+        if (error) {
+          throw new Error("SQLITE_FULL: database or disk is full");
+        }
+        return db.finishPollRun(runId, error);
+      },
+    };
+    const app = buildApp({
+      db: failingDb,
+      config: {
+        machinesPath: csvPath,
+        dbPath: join(dir, "db.sqlite"),
+        envPath: join(dir, ".env"),
+        user: "ezc",
+        fallbackUser: "",
+        keyPath: "~/.ssh/test",
+        connectTimeoutSeconds: 10,
+        probeTimeoutSeconds: 60,
+        jobs: 1,
+        pollIntervalSeconds: 300,
+        skipLogs: true,
+        processArgsMaxChars: 512,
+        pollOnStartup: false,
+        retentionDays: 30,
+        minFreeDiskBytes: 5 * 1024 ** 3,
+        telegramBotToken: "",
+        telegramChatId: "",
+        slackBotToken: "",
+        slackChannelsPath: "",
+        slackDryRun: false,
+        agentDrainEnabled: false,
+        agentDrainTimeoutSeconds: 120,
+        agentDrainMaxLines: 600,
+        agentRetentionDays: 21,
+        notifyRecovery: false,
+        heartbeatUrl: "",
+        host: "127.0.0.1",
+        port: 0,
+      },
+      probeMachine: async () => {
+        throw new Error("probe exploded");
+      },
+    });
+
+    const response = await app.inject({ method: "POST", url: "/api/poll-runs" });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({ runId: expect.any(Number) });
+    expect(response.json().error).toContain("probe exploded");
+    expect(response.json().error).toContain("failed to persist run failure: SQLITE_FULL");
+    await app.close();
+    db.close();
+  });
+
   it("serves summary, machines, history, processes, and manual poll trigger", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-api-"));
     const csvPath = join(dir, "machines.csv");

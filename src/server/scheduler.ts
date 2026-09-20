@@ -154,6 +154,7 @@ export class PollScheduler {
     this.currentPoll = { startedAt: new Date().toISOString() };
     this.lastError = "";
     let runId = 0;
+    let pollFailure: unknown;
 
     try {
       const machines = readInventoryFromFile(this.config.machinesPath);
@@ -211,12 +212,19 @@ export class PollScheduler {
       await this.deliverAlerts(outcomes);
       await this.deliverGpuDropAnnouncements();
     } catch (error) {
-      this.lastError = error instanceof Error ? error.message : String(error);
+      const primaryError = error instanceof Error ? error.message : String(error);
+      this.lastError = primaryError;
       if (runId > 0) {
-        this.db.finishPollRun(runId, this.lastError);
-        throw new PollFailedError(runId, this.lastError);
+        try {
+          this.db.finishPollRun(runId, primaryError);
+        } catch (finishError) {
+          const finishMessage = finishError instanceof Error ? finishError.message : String(finishError);
+          this.lastError = `${primaryError}; failed to persist run failure: ${finishMessage}`;
+          console.error(`failed to record poll run ${runId} failure`, finishError);
+        }
+        pollFailure = new PollFailedError(runId, this.lastError);
       } else {
-        throw error;
+        pollFailure = error;
       }
     } finally {
       this.running = false;
@@ -224,7 +232,7 @@ export class PollScheduler {
       this.lastFinishedAt = new Date().toISOString();
     }
 
-    if (!this.lastError && this.config.heartbeatUrl) {
+    if (!pollFailure && this.config.heartbeatUrl) {
       // Dead-man's-switch ping: if these stop arriving, the watchdog service
       // alerts that the monitor itself is down.
       fetch(this.config.heartbeatUrl).catch((error) => {
@@ -239,6 +247,10 @@ export class PollScheduler {
           console.error("queued poll failed", error);
         });
       }, 50);
+    }
+
+    if (pollFailure) {
+      throw pollFailure;
     }
 
     return { runId, skipped: false };

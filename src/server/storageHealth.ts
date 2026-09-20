@@ -18,9 +18,18 @@ export async function readStorageHealth(
     return { databaseBytes: null, freeDiskBytes: null, minimumFreeDiskBytes };
   }
 
-  const databaseBytes = await fs.stat(dbPath).then((value) => value.size).catch(() => null);
+  const resolvedDbPath = resolve(dbPath);
+  let databaseBytes: number | null = null;
+  let filesystemPath = dirname(resolvedDbPath);
   try {
-    const disk = await statNearestFilesystem(dirname(resolve(dbPath)), fs);
+    databaseBytes = (await fs.stat(resolvedDbPath)).size;
+    filesystemPath = resolvedDbPath;
+  } catch {
+    // A database may not exist until first startup; measure its nearest
+    // existing parent without making missing telemetry fatal.
+  }
+  try {
+    const disk = await statNearestFilesystem(filesystemPath, fs);
     return {
       databaseBytes,
       freeDiskBytes: disk.bavail * disk.bsize,
@@ -42,6 +51,9 @@ async function statNearestFilesystem(path: string, fs: StorageHealthFs): Promise
     try {
       return await fs.statfs(current);
     } catch (error) {
+      if (!isMissingPathError(error)) {
+        throw error;
+      }
       const parent = dirname(current);
       if (parent === current) {
         throw error;
@@ -49,4 +61,11 @@ async function statNearestFilesystem(path: string, fs: StorageHealthFs): Promise
       current = parent;
     }
   }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return false;
+  }
+  return error.code === "ENOENT" || error.code === "ENOTDIR";
 }

@@ -105,7 +105,7 @@ The production recovery sequence is deliberately staged:
 4. run one poll or a dedicated safe prune command and verify row/date boundaries and application health;
 5. measure SQLite page and freelist counts after pruning;
 6. schedule a maintenance window for physical compaction only if it will materially recover disk;
-7. compact into a separate destination with sufficient capacity, verify the replacement database, stop the service, swap files atomically, restart, and verify health.
+7. stop the service and every database writer, compact into a separate destination with sufficient capacity, verify and promote the replacement while writers remain stopped, restart, and verify health.
 
 Compaction must not use the nearly full root filesystem as scratch space. `/dev/shm` is not assumed safe merely because it appears large; its use requires an explicit memory-capacity check and maintenance approval. Until compaction, SQLite may reuse freed pages even though the filesystem-visible file size does not shrink.
 
@@ -137,7 +137,7 @@ Code rollout and database maintenance are separate operations.
 
 For code rollout, record the current commit, install from the lockfile, run the full validation command, build, restart systemd, and verify the local and public health endpoints plus representative dashboard reads. Roll back by returning to the recorded commit, reinstalling from its lockfile, rebuilding, and restarting.
 
-For database maintenance, keep the original database untouched until the compacted copy passes integrity checks and representative application queries. Stop the service only for the final file swap. Roll back by restoring the original database file and restarting the service.
+For database maintenance, stop the service and every database writer before producing the final compacted copy, and keep them stopped through integrity checks and the file swap so the promoted database cannot omit newer writes. Keep the original database until the replacement passes integrity checks and representative application queries. Roll back by restoring the original database file before restarting writers.
 
 ## Success Criteria
 
