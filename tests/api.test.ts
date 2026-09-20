@@ -303,6 +303,11 @@ describe("api", () => {
           gpuMetrics: [{ gpuIndex: 0, uuid: "GPU-feed1111-2222-3333-4444-555566667777", gpuUtil: 77, powerW: 250.5 }],
         };
       },
+      storageHealthProvider: async () => ({
+        databaseBytes: 1_024,
+        freeDiskBytes: 10_000,
+        minimumFreeDiskBytes: 5_000,
+      }),
     });
 
     const poll = await app.inject({ method: "POST", url: "/api/poll-runs" });
