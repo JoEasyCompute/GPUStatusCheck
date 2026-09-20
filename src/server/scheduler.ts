@@ -29,6 +29,13 @@ function safeLoadChannelMap(path: string) {
 export type ProbeMachine = (machine: Machine) => Promise<ProbeResult>;
 export type SendAlertChunk = (chunk: string) => Promise<void>;
 
+export class PollFailedError extends Error {
+  constructor(public readonly runId: number, message: string) {
+    super(message);
+    this.name = "PollFailedError";
+  }
+}
+
 type ProbeObservation = {
   machine: Machine;
   visibleUuids: string[];
@@ -207,6 +214,7 @@ export class PollScheduler {
       this.lastError = error instanceof Error ? error.message : String(error);
       if (runId > 0) {
         this.db.finishPollRun(runId, this.lastError);
+        throw new PollFailedError(runId, this.lastError);
       } else {
         throw error;
       }
@@ -478,5 +486,9 @@ async function runConcurrent<T>(items: T[], limit: number, worker: (item: T) => 
       await worker(item);
     }
   });
-  await Promise.all(workers);
+  const results = await Promise.allSettled(workers);
+  const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failed) {
+    throw failed.reason;
+  }
 }

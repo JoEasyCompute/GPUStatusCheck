@@ -7,7 +7,7 @@ import type { AppConfig } from "./config";
 import { writeEnvSettings } from "./config";
 import type { DashboardDatabase } from "./db";
 import { readInventoryFromFile } from "./inventory";
-import { PollScheduler, type ProbeMachine } from "./scheduler";
+import { PollFailedError, PollScheduler, type ProbeMachine } from "./scheduler";
 
 export type BuildAppOptions = {
   db: DashboardDatabase;
@@ -155,7 +155,16 @@ export function buildApp(options: BuildAppOptions) {
   app.get<{ Querystring: { limit?: string } }>("/api/poll-runs", async (request) =>
     options.db.listPollRuns(parseLimit(request.query.limit, 50)),
   );
-  app.post("/api/poll-runs", async () => scheduler.pollOnce());
+  app.post("/api/poll-runs", async (_request, reply) => {
+    try {
+      return await scheduler.pollOnce();
+    } catch (error) {
+      if (error instanceof PollFailedError) {
+        return reply.code(500).send({ error: error.message, runId: error.runId });
+      }
+      throw error;
+    }
+  });
 
   const dist = resolve("dist/client");
   if (existsSync(dist)) {
