@@ -112,17 +112,20 @@ export function buildApp(options: BuildAppOptions) {
     if (!options.db.getMachine(machineId)) {
       return reply.code(404).send({ error: "machine not found" });
     }
-    if (typeof request.body?.maintenance === "boolean") {
-      options.db.setMachineMaintenance(machineId, request.body.maintenance);
-    }
     if ("expectedGpuCount" in (request.body ?? {})) {
       const expected = request.body.expectedGpuCount;
       if (expected !== null && (!Number.isInteger(expected) || expected! < 0)) {
         return reply.code(400).send({ error: "expectedGpuCount must be a non-negative integer or null" });
       }
-      options.db.setExpectedGpuCount(machineId, expected ?? null);
     }
-    return options.db.getMachine(machineId);
+    const updates: { maintenance?: boolean; expectedGpuCount?: number | null } = {};
+    if (typeof request.body?.maintenance === "boolean") {
+      updates.maintenance = request.body.maintenance;
+    }
+    if ("expectedGpuCount" in (request.body ?? {})) {
+      updates.expectedGpuCount = request.body.expectedGpuCount ?? null;
+    }
+    return options.db.updateMachineSettings(machineId, updates);
   });
   app.get<{ Querystring: { hours?: string } }>("/api/fleet-history", async (request) => {
     const hours = Number(request.query.hours);

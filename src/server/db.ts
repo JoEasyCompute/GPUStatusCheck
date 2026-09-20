@@ -512,6 +512,31 @@ export function createDatabase(dbPath: string) {
     db.prepare("UPDATE machines SET expected_gpu_count = ?, updated_at = ? WHERE id = ?").run(expected, new Date().toISOString(), machineId);
   }
 
+  function updateMachineSettings(
+    machineId: number,
+    updates: { maintenance?: boolean; expectedGpuCount?: number | null },
+  ): Machine | undefined {
+    return db.transaction(() => {
+      const assignments: string[] = [];
+      const values: Array<number | string | null> = [];
+      if (updates.maintenance !== undefined) {
+        assignments.push("maintenance = ?");
+        values.push(updates.maintenance ? 1 : 0);
+      }
+      if (updates.expectedGpuCount !== undefined) {
+        assignments.push("expected_gpu_count = ?");
+        values.push(updates.expectedGpuCount);
+      }
+      if (assignments.length > 0) {
+        assignments.push("updated_at = ?");
+        values.push(new Date().toISOString());
+        db.prepare(`UPDATE machines SET ${assignments.join(", ")} WHERE id = ?`).run(...values, machineId);
+      }
+      const row = db.prepare("SELECT * FROM machines WHERE id = ?").get(machineId) as MachineRow | undefined;
+      return row ? rowToMachine(row) : undefined;
+    })();
+  }
+
   function raiseExpectedGpuCount(machineId: number, gpuCount: number): void {
     db.prepare(`
       UPDATE machines SET expected_gpu_count = ?, updated_at = ?
@@ -1076,6 +1101,7 @@ export function createDatabase(dbPath: string) {
     saveAlertStates,
     setMachineMaintenance,
     setExpectedGpuCount,
+    updateMachineSettings,
     raiseExpectedGpuCount,
     listFleetHistory,
     listGroupHistory,

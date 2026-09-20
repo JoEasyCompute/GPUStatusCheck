@@ -7,6 +7,64 @@ import { createDatabase } from "../src/server/db";
 import type { ProbeResult } from "../src/shared/types";
 
 describe("api", () => {
+  it("does not partially apply invalid machine settings", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-api-atomic-settings-"));
+    const csvPath = join(dir, "machines.csv");
+    writeFileSync(csvPath, "name,ip\nalpha,10.0.0.1\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    const machine = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22 });
+    const app = buildApp({
+      db,
+      config: {
+        machinesPath: csvPath,
+        dbPath: join(dir, "db.sqlite"),
+        envPath: join(dir, ".env"),
+        user: "ezc",
+        fallbackUser: "",
+        keyPath: "~/.ssh/test",
+        connectTimeoutSeconds: 10,
+        probeTimeoutSeconds: 60,
+        jobs: 1,
+        pollIntervalSeconds: 300,
+        skipLogs: true,
+        processArgsMaxChars: 512,
+        pollOnStartup: false,
+        retentionDays: 30,
+        telegramBotToken: "",
+        telegramChatId: "",
+        slackBotToken: "",
+        slackChannelsPath: "",
+        slackDryRun: false,
+        agentDrainEnabled: false,
+        agentDrainTimeoutSeconds: 120,
+        agentDrainMaxLines: 600,
+        agentRetentionDays: 21,
+        notifyRecovery: false,
+        heartbeatUrl: "",
+        host: "127.0.0.1",
+        port: 0,
+      },
+      probeMachine: async (target): Promise<ProbeResult> => ({
+        name: target.name,
+        ip: target.ip,
+        sshOk: true,
+        status: "ok",
+      }),
+    });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/machines/${machine.id}`,
+      payload: { maintenance: true, expectedGpuCount: -3 },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(db.getMachine(machine.id!)).toMatchObject({ maintenance: false, expectedGpuCount: null });
+    await app.close();
+    db.close();
+  });
+
   it("returns a failed manual poll with its run id", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-api-failed-poll-"));
     const csvPath = join(dir, "machines.csv");
