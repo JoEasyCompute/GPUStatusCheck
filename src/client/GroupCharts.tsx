@@ -1,23 +1,29 @@
 import { useEffect, useState } from "react";
 import type { GroupHistoryPoint } from "../shared/types";
+import { fetchJsonArray } from "./api";
 import { chartColors, LineChart } from "./LineChart";
 import type { PowerChartPoint } from "./powerChartData";
 import { useTimeWindow } from "./useTimeWindow";
 
 export function GroupCharts({ groupBy, label }: { groupBy: "owner" | "location"; label: string }) {
   const [points, setPoints] = useState<GroupHistoryPoint[]>([]);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      fetch(`/api/group-history?by=${groupBy}&key=${encodeURIComponent(label)}&hours=24`)
-        .then((response) => response.json())
-        .then((next: GroupHistoryPoint[]) => {
-          if (!cancelled && Array.isArray(next)) {
+      fetchJsonArray<GroupHistoryPoint>(`/api/group-history?by=${groupBy}&key=${encodeURIComponent(label)}&hours=24`)
+        .then((next) => {
+          if (!cancelled) {
             setPoints(next);
+            setError("");
           }
         })
-        .catch(() => {});
+        .catch((loadError) => {
+          if (!cancelled) {
+            setError(loadError instanceof Error ? loadError.message : String(loadError));
+          }
+        });
     };
     load();
     const timer = setInterval(load, 60_000);
@@ -46,6 +52,7 @@ export function GroupCharts({ groupBy, label }: { groupBy: "owner" | "location";
 
   return (
     <div className="group-charts" onClick={(event) => event.stopPropagation()}>
+      {error ? <p className="load-error">Group history unavailable: {error}</p> : null}
       <div className="chart-toolbar">
         <span className="chart-hint">Group history (24h) · pinch or ^scroll to zoom · drag to pan · double-click to reset</span>
         {view ? <button className="chart-reset" onClick={reset}>Reset zoom</button> : null}

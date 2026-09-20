@@ -5,6 +5,23 @@ import { join } from "node:path";
 import { createDatabase } from "../src/server/db";
 
 describe("database", () => {
+  it("updates machine settings transactionally", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-settings-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+    const machine = db.upsertMachine({
+      name: "alpha",
+      ip: "10.0.0.1",
+      sshHost: "10.0.0.1",
+      sshPort: 22,
+    });
+
+    db.updateMachineSettings(machine.id!, { maintenance: true, expectedGpuCount: 8 });
+
+    expect(db.getMachine(machine.id!)).toMatchObject({ maintenance: true, expectedGpuCount: 8 });
+    db.close();
+  });
+
   it("stores machines, probe history, processes, and summary", () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-db-"));
     const db = createDatabase(join(dir, "test.sqlite"));

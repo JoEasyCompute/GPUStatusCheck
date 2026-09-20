@@ -7,6 +7,245 @@ import { createDatabase } from "../src/server/db";
 import type { ProbeResult } from "../src/shared/types";
 
 describe("api", () => {
+  it("reports low disk space without hiding poll freshness", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-api-storage-health-"));
+    const csvPath = join(dir, "machines.csv");
+    writeFileSync(csvPath, "name,ip\nalpha,10.0.0.1\n");
+    const dbPath = join(dir, "db.sqlite");
+    const db = createDatabase(dbPath);
+    db.migrate();
+    const app = buildApp({
+      db,
+      config: {
+        machinesPath: csvPath,
+        dbPath,
+        envPath: join(dir, ".env"),
+        user: "ezc",
+        fallbackUser: "",
+        keyPath: "~/.ssh/test",
+        connectTimeoutSeconds: 10,
+        probeTimeoutSeconds: 60,
+        jobs: 1,
+        pollIntervalSeconds: 300,
+        skipLogs: true,
+        processArgsMaxChars: 512,
+        pollOnStartup: false,
+        retentionDays: 30,
+        minFreeDiskBytes: 5 * 1024 ** 3,
+        telegramBotToken: "",
+        telegramChatId: "",
+        slackBotToken: "",
+        slackChannelsPath: "",
+        slackDryRun: false,
+        agentDrainEnabled: false,
+        agentDrainTimeoutSeconds: 120,
+        agentDrainMaxLines: 600,
+        agentRetentionDays: 21,
+        notifyRecovery: false,
+        heartbeatUrl: "",
+        host: "127.0.0.1",
+        port: 0,
+      },
+      storageHealthProvider: async () => ({
+        databaseBytes: 11_000_000_000,
+        freeDiskBytes: 3_000_000_000,
+        minimumFreeDiskBytes: 5_368_709_120,
+      }),
+    });
+
+    const response = await app.inject({ method: "GET", url: "/api/health" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      ok: false,
+      secondsSinceLastPoll: expect.any(Number),
+      reasons: ["low_disk_space"],
+      storage: {
+        databaseBytes: 11_000_000_000,
+        freeDiskBytes: 3_000_000_000,
+        minimumFreeDiskBytes: 5_368_709_120,
+      },
+    });
+    await app.close();
+    db.close();
+  });
+
+  it("does not partially apply invalid machine settings", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-api-atomic-settings-"));
+    const csvPath = join(dir, "machines.csv");
+    writeFileSync(csvPath, "name,ip\nalpha,10.0.0.1\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    const machine = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22 });
+    const app = buildApp({
+      db,
+      config: {
+        machinesPath: csvPath,
+        dbPath: join(dir, "db.sqlite"),
+        envPath: join(dir, ".env"),
+        user: "ezc",
+        fallbackUser: "",
+        keyPath: "~/.ssh/test",
+        connectTimeoutSeconds: 10,
+        probeTimeoutSeconds: 60,
+        jobs: 1,
+        pollIntervalSeconds: 300,
+        skipLogs: true,
+        processArgsMaxChars: 512,
+        pollOnStartup: false,
+        retentionDays: 30,
+        minFreeDiskBytes: 5 * 1024 ** 3,
+        telegramBotToken: "",
+        telegramChatId: "",
+        slackBotToken: "",
+        slackChannelsPath: "",
+        slackDryRun: false,
+        agentDrainEnabled: false,
+        agentDrainTimeoutSeconds: 120,
+        agentDrainMaxLines: 600,
+        agentRetentionDays: 21,
+        notifyRecovery: false,
+        heartbeatUrl: "",
+        host: "127.0.0.1",
+        port: 0,
+      },
+      probeMachine: async (target): Promise<ProbeResult> => ({
+        name: target.name,
+        ip: target.ip,
+        sshOk: true,
+        status: "ok",
+      }),
+    });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/machines/${machine.id}`,
+      payload: { maintenance: true, expectedGpuCount: -3 },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(db.getMachine(machine.id!)).toMatchObject({ maintenance: false, expectedGpuCount: null });
+    await app.close();
+    db.close();
+  });
+
+  it("returns a failed manual poll with its run id", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-api-failed-poll-"));
+    const csvPath = join(dir, "machines.csv");
+    const envPath = join(dir, ".env");
+    writeFileSync(csvPath, "name,ip\nalpha,10.0.0.1\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    const app = buildApp({
+      db,
+      config: {
+        machinesPath: csvPath,
+        dbPath: join(dir, "db.sqlite"),
+        envPath,
+        user: "ezc",
+        fallbackUser: "",
+        keyPath: "~/.ssh/test",
+        connectTimeoutSeconds: 10,
+        probeTimeoutSeconds: 60,
+        jobs: 1,
+        pollIntervalSeconds: 300,
+        skipLogs: true,
+        processArgsMaxChars: 512,
+        pollOnStartup: false,
+        retentionDays: 30,
+        minFreeDiskBytes: 5 * 1024 ** 3,
+        telegramBotToken: "",
+        telegramChatId: "",
+        slackBotToken: "",
+        slackChannelsPath: "",
+        slackDryRun: false,
+        agentDrainEnabled: false,
+        agentDrainTimeoutSeconds: 120,
+        agentDrainMaxLines: 600,
+        agentRetentionDays: 21,
+        notifyRecovery: false,
+        heartbeatUrl: "",
+        host: "127.0.0.1",
+        port: 0,
+      },
+      probeMachine: async () => {
+        throw new Error("probe exploded");
+      },
+    });
+
+    const response = await app.inject({ method: "POST", url: "/api/poll-runs" });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({
+      error: "probe exploded",
+      runId: expect.any(Number),
+    });
+    await app.close();
+    db.close();
+  });
+
+  it("preserves the run id when recording a failed run also fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-api-failed-finalization-"));
+    const csvPath = join(dir, "machines.csv");
+    writeFileSync(csvPath, "name,ip\nalpha,10.0.0.1\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    const failingDb = {
+      ...db,
+      finishPollRun(runId: number, error?: string) {
+        if (error) {
+          throw new Error("SQLITE_FULL: database or disk is full");
+        }
+        return db.finishPollRun(runId, error);
+      },
+    };
+    const app = buildApp({
+      db: failingDb,
+      config: {
+        machinesPath: csvPath,
+        dbPath: join(dir, "db.sqlite"),
+        envPath: join(dir, ".env"),
+        user: "ezc",
+        fallbackUser: "",
+        keyPath: "~/.ssh/test",
+        connectTimeoutSeconds: 10,
+        probeTimeoutSeconds: 60,
+        jobs: 1,
+        pollIntervalSeconds: 300,
+        skipLogs: true,
+        processArgsMaxChars: 512,
+        pollOnStartup: false,
+        retentionDays: 30,
+        minFreeDiskBytes: 5 * 1024 ** 3,
+        telegramBotToken: "",
+        telegramChatId: "",
+        slackBotToken: "",
+        slackChannelsPath: "",
+        slackDryRun: false,
+        agentDrainEnabled: false,
+        agentDrainTimeoutSeconds: 120,
+        agentDrainMaxLines: 600,
+        agentRetentionDays: 21,
+        notifyRecovery: false,
+        heartbeatUrl: "",
+        host: "127.0.0.1",
+        port: 0,
+      },
+      probeMachine: async () => {
+        throw new Error("probe exploded");
+      },
+    });
+
+    const response = await app.inject({ method: "POST", url: "/api/poll-runs" });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toMatchObject({ runId: expect.any(Number) });
+    expect(response.json().error).toContain("probe exploded");
+    expect(response.json().error).toContain("failed to persist run failure: SQLITE_FULL");
+    await app.close();
+    db.close();
+  });
+
   it("serves summary, machines, history, processes, and manual poll trigger", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-api-"));
     const csvPath = join(dir, "machines.csv");
@@ -33,6 +272,7 @@ describe("api", () => {
         processArgsMaxChars: 512,
         pollOnStartup: false,
         retentionDays: 30,
+        minFreeDiskBytes: 5 * 1024 ** 3,
         telegramBotToken: "",
         telegramChatId: "",
         slackBotToken: "",
@@ -250,6 +490,7 @@ describe("api", () => {
         processArgsMaxChars: 512,
         pollOnStartup: false,
         retentionDays: 30,
+        minFreeDiskBytes: 5 * 1024 ** 3,
         telegramBotToken: "",
         telegramChatId: "",
         slackBotToken: "",

@@ -29,6 +29,13 @@ function safeLoadChannelMap(path: string) {
 export type ProbeMachine = (machine: Machine) => Promise<ProbeResult>;
 export type SendAlertChunk = (chunk: string) => Promise<void>;
 
+export class PollFailedError extends Error {
+  constructor(public readonly runId: number, message: string) {
+    super(message);
+    this.name = "PollFailedError";
+  }
+}
+
 type ProbeObservation = {
   machine: Machine;
   visibleUuids: string[];
@@ -147,6 +154,7 @@ export class PollScheduler {
     this.currentPoll = { startedAt: new Date().toISOString() };
     this.lastError = "";
     let runId = 0;
+    let pollFailure: unknown;
 
     try {
       const machines = readInventoryFromFile(this.config.machinesPath);
@@ -204,11 +212,19 @@ export class PollScheduler {
       await this.deliverAlerts(outcomes);
       await this.deliverGpuDropAnnouncements();
     } catch (error) {
-      this.lastError = error instanceof Error ? error.message : String(error);
+      const primaryError = error instanceof Error ? error.message : String(error);
+      this.lastError = primaryError;
       if (runId > 0) {
-        this.db.finishPollRun(runId, this.lastError);
+        try {
+          this.db.finishPollRun(runId, primaryError);
+        } catch (finishError) {
+          const finishMessage = finishError instanceof Error ? finishError.message : String(finishError);
+          this.lastError = `${primaryError}; failed to persist run failure: ${finishMessage}`;
+          console.error(`failed to record poll run ${runId} failure`, finishError);
+        }
+        pollFailure = new PollFailedError(runId, this.lastError);
       } else {
-        throw error;
+        pollFailure = error;
       }
     } finally {
       this.running = false;
@@ -216,7 +232,7 @@ export class PollScheduler {
       this.lastFinishedAt = new Date().toISOString();
     }
 
-    if (!this.lastError && this.config.heartbeatUrl) {
+    if (!pollFailure && this.config.heartbeatUrl) {
       // Dead-man's-switch ping: if these stop arriving, the watchdog service
       // alerts that the monitor itself is down.
       fetch(this.config.heartbeatUrl).catch((error) => {
@@ -231,6 +247,10 @@ export class PollScheduler {
           console.error("queued poll failed", error);
         });
       }, 50);
+    }
+
+    if (pollFailure) {
+      throw pollFailure;
     }
 
     return { runId, skipped: false };
@@ -478,5 +498,9 @@ async function runConcurrent<T>(items: T[], limit: number, worker: (item: T) => 
       await worker(item);
     }
   });
-  await Promise.all(workers);
+  const results = await Promise.allSettled(workers);
+  const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failed) {
+    throw failed.reason;
+  }
 }

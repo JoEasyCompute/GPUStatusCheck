@@ -208,6 +208,12 @@ input::placeholder {
   color: var(--crit-ink);
 }
 
+.load-error {
+  color: var(--crit-ink);
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
+
 .notice {
   background: color-mix(in srgb, var(--good) 10%, var(--surface));
   border: 1px solid color-mix(in srgb, var(--good) 32%, transparent);

@@ -3,6 +3,7 @@ import type { GpuProcess, MachineWithLatest, ProbeResult } from "../shared/types
 import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
 import { GpuCharts } from "./PowerCharts";
+import { fetchJsonArray } from "./api";
 
 export function MachineDetailModal({
   machine,
@@ -153,17 +154,22 @@ function DetailPane({ machine, history, processes, onSelectGpu }: { machine: Mac
 
 function KernelEventsSection({ machineId }: { machineId: number }) {
   const [events, setEvents] = useState<Array<{ id: number; eventAt: string; line: string }>>([]);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/machines/${machineId}/kernel-events?hours=168&limit=100`)
-      .then((response) => response.json())
+    fetchJsonArray<{ id: number; eventAt: string; line: string }>(`/api/machines/${machineId}/kernel-events?hours=168&limit=100`)
       .then((next) => {
-        if (!cancelled && Array.isArray(next)) {
+        if (!cancelled) {
           setEvents(next);
+          setError("");
         }
       })
-      .catch(() => {});
+      .catch((loadError) => {
+        if (!cancelled) {
+          setError(loadError instanceof Error ? loadError.message : String(loadError));
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -173,6 +179,7 @@ function KernelEventsSection({ machineId }: { machineId: number }) {
     <details className="detail-section">
       <summary>Kernel events (agent, 7d)</summary>
       <div className="history-list">
+        {error ? <p className="load-error">Kernel events unavailable: {error}</p> : null}
         {events.length === 0 ? <p>No kernel/GPU events captured by the agent.</p> : null}
         {events.map((event) => (
           <div className="kernel-event-row" key={event.id}>

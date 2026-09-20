@@ -226,8 +226,12 @@ http://127.0.0.1:4100
 Run tests:
 
 ```bash
-npm test
+npm run check
 ```
+
+`npm run check` runs the TypeScript and Python tests, strict type-checking,
+the production client build, and syntax checks for every tracked shell script.
+Node.js 22.12 or newer is required.
 
 Dashboard-specific settings:
 
@@ -238,6 +242,7 @@ GPUCHECK_DB=data/gpu-status.sqlite
 GPUCHECK_PROCESS_ARGS_MAX_CHARS=512
 GPUCHECK_DISABLE_STARTUP_POLL=0
 GPUCHECK_RETENTION_DAYS=30
+GPUCHECK_MIN_FREE_DISK_BYTES=5368709120
 GPUCHECK_HOST=127.0.0.1
 PORT=4100
 SLACK_BOT_TOKEN=
@@ -251,10 +256,78 @@ is no authentication, and the dashboard can trigger SSH-backed polls and edit
 `.env`, so only do this on a trusted network (or keep it behind a VPN such as
 Tailscale or a reverse proxy with auth).
 
+The current deployment intentionally keeps both reads and mutations
+unauthenticated. This means any client that can reach the dashboard can trigger
+SSH-backed polls, toggle maintenance, and edit the two exposed runtime settings.
+That is an accepted operational constraint, not an authentication boundary.
+
 History older than `GPUCHECK_RETENTION_DAYS` (default 30) is pruned from the
 SQLite database after each poll so it does not grow without bound. Each
 machine's most recent probe result is always kept, even if it is older than
 the retention window. Set `GPUCHECK_RETENTION_DAYS=0` to keep history forever.
+`GPUCHECK_MIN_FREE_DISK_BYTES` makes `/api/health` return HTTP 503 before the
+database fills its filesystem; the default is 5 GiB.
+
+### Production deployment and rollback
+
+The checked-in `deploy/gpustatuscheck.service` is the production service
+template. Review its user, group, working directory, and executable paths for
+the target host before installing it.
+
+```bash
+npm ci
+npm run check
+sudo install -m 0644 deploy/gpustatuscheck.service /etc/systemd/system/gpustatuscheck.service
+sudo systemctl daemon-reload
+sudo systemctl restart gpustatuscheck
+curl --fail --show-error http://127.0.0.1:4100/api/health
+```
+
+Before deployment, record `git rev-parse HEAD` as the rollback commit. To roll
+back code, check out that commit, run `npm ci`, `npm run build`, restart the
+service, and verify both the local and public health endpoints.
+
+### Database backup and storage recovery
+
+Detailed history is pruned after a completed poll, but deleting SQLite rows
+does not immediately shrink the database file. Never run an in-place `VACUUM`
+on a nearly full filesystem: SQLite needs substantial temporary space.
+
+Before reducing retention or compacting, create an online backup on a separate
+filesystem with enough free capacity, verify it, and copy it off-host:
+
+```bash
+cd /home/ezc/gpustatuscheck
+backup_dir=/mnt/gpu-backups
+df -h "$backup_dir"
+backup_file="$backup_dir/gpu-status-$(date -u +%Y%m%dT%H%M%SZ).sqlite"
+sqlite3 data/gpu-status.sqlite ".backup '$backup_file'"
+sqlite3 "$backup_file" 'PRAGMA integrity_check;'
+sha256sum "$backup_file"
+```
+
+The integrity check must print `ok`. Copy the backup and its recorded checksum
+to another host before continuing. Then set `GPUCHECK_RETENTION_DAYS=30`,
+restart the service so it reloads `.env`, and trigger one controlled poll:
+
+```bash
+curl --fail --show-error -X POST http://127.0.0.1:4100/api/poll-runs
+sqlite3 data/gpu-status.sqlite 'PRAGMA page_size; PRAGMA page_count; PRAGMA freelist_count;'
+curl --fail --show-error http://127.0.0.1:4100/api/health
+```
+
+Freed pages are reused by future inserts even though the file remains the same
+size. Physical compaction is a separate maintenance operation requiring
+explicit approval. At the start of that maintenance window, stop the service
+and every other process that can write the database; keep all writers stopped
+while creating the final `VACUUM INTO` copy, running `PRAGMA integrity_check`,
+recording its checksum, and promoting it. Copy the original database and any
+WAL/SHM files to the backup filesystem, verify that copy, then remove the root
+filesystem originals only after the backup is proven. Copy the compacted
+database to `data/gpu-status.sqlite.next`, verify it again, and rename it to
+`data/gpu-status.sqlite`. Restart writers only after the new database passes
+health plus representative machine, history, and GPU endpoint checks. Roll back
+by keeping writers stopped and restoring the verified original database.
 
 ### On-host agent (optional, per machine)
 

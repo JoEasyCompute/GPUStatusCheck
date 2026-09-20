@@ -2,22 +2,26 @@ import fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { EditableRuntimeConfig, RuntimeConfig } from "../shared/types";
+import type { EditableRuntimeConfig, HealthStatus, RuntimeConfig, StorageHealth } from "../shared/types";
 import type { AppConfig } from "./config";
 import { writeEnvSettings } from "./config";
 import type { DashboardDatabase } from "./db";
 import { readInventoryFromFile } from "./inventory";
-import { PollScheduler, type ProbeMachine } from "./scheduler";
+import { PollFailedError, PollScheduler, type ProbeMachine } from "./scheduler";
+import { readStorageHealth } from "./storageHealth";
 
 export type BuildAppOptions = {
   db: DashboardDatabase;
   config: AppConfig;
   probeMachine?: ProbeMachine;
+  storageHealthProvider?: () => Promise<StorageHealth>;
 };
 
 export function buildApp(options: BuildAppOptions) {
   const app = fastify({ logger: false });
   const scheduler = new PollScheduler(options.db, options.config, options.probeMachine);
+  const storageHealthProvider = options.storageHealthProvider
+    ?? (() => readStorageHealth(options.config.dbPath, options.config.minFreeDiskBytes));
   const runtimeConfig = (): RuntimeConfig => ({
     machinesPath: options.config.machinesPath,
     dbPath: options.config.dbPath,
@@ -28,16 +32,25 @@ export function buildApp(options: BuildAppOptions) {
     skipLogs: options.config.skipLogs,
     processArgsMaxChars: options.config.processArgsMaxChars,
     pollOnStartup: options.config.pollOnStartup,
+    minFreeDiskBytes: options.config.minFreeDiskBytes,
     port: options.config.port,
   });
 
   const startedAt = Date.now();
-  app.get("/api/health", async (_request, reply) => {
+  app.get("/api/health", async (_request, reply): Promise<HealthStatus> => {
     const status = scheduler.getStatus();
     const lastPollAt = status.lastFinishedAt ? Date.parse(status.lastFinishedAt) : startedAt;
     const secondsSinceLastPoll = Math.floor((Date.now() - lastPollAt) / 1000);
     const staleAfterSeconds = Math.max(900, status.pollIntervalSeconds * 3);
-    const ok = secondsSinceLastPoll <= staleAfterSeconds;
+    const storage = await storageHealthProvider();
+    const reasons: string[] = [];
+    if (secondsSinceLastPoll > staleAfterSeconds) {
+      reasons.push("stale_poll");
+    }
+    if (storage.freeDiskBytes !== null && storage.freeDiskBytes < storage.minimumFreeDiskBytes) {
+      reasons.push("low_disk_space");
+    }
+    const ok = reasons.length === 0;
     if (!ok) {
       reply.code(503);
     }
@@ -48,6 +61,8 @@ export function buildApp(options: BuildAppOptions) {
       secondsSinceLastPoll,
       staleAfterSeconds,
       lastError: status.lastError,
+      reasons,
+      storage,
     };
   });
   app.get("/api/config", async (): Promise<RuntimeConfig> => runtimeConfig());
@@ -112,17 +127,20 @@ export function buildApp(options: BuildAppOptions) {
     if (!options.db.getMachine(machineId)) {
       return reply.code(404).send({ error: "machine not found" });
     }
-    if (typeof request.body?.maintenance === "boolean") {
-      options.db.setMachineMaintenance(machineId, request.body.maintenance);
-    }
     if ("expectedGpuCount" in (request.body ?? {})) {
       const expected = request.body.expectedGpuCount;
       if (expected !== null && (!Number.isInteger(expected) || expected! < 0)) {
         return reply.code(400).send({ error: "expectedGpuCount must be a non-negative integer or null" });
       }
-      options.db.setExpectedGpuCount(machineId, expected ?? null);
     }
-    return options.db.getMachine(machineId);
+    const updates: { maintenance?: boolean; expectedGpuCount?: number | null } = {};
+    if (typeof request.body?.maintenance === "boolean") {
+      updates.maintenance = request.body.maintenance;
+    }
+    if ("expectedGpuCount" in (request.body ?? {})) {
+      updates.expectedGpuCount = request.body.expectedGpuCount ?? null;
+    }
+    return options.db.updateMachineSettings(machineId, updates);
   });
   app.get<{ Querystring: { hours?: string } }>("/api/fleet-history", async (request) => {
     const hours = Number(request.query.hours);
@@ -155,7 +173,16 @@ export function buildApp(options: BuildAppOptions) {
   app.get<{ Querystring: { limit?: string } }>("/api/poll-runs", async (request) =>
     options.db.listPollRuns(parseLimit(request.query.limit, 50)),
   );
-  app.post("/api/poll-runs", async () => scheduler.pollOnce());
+  app.post("/api/poll-runs", async (_request, reply) => {
+    try {
+      return await scheduler.pollOnce();
+    } catch (error) {
+      if (error instanceof PollFailedError) {
+        return reply.code(500).send({ error: error.message, runId: error.runId });
+      }
+      throw error;
+    }
+  });
 
   const dist = resolve("dist/client");
   if (existsSync(dist)) {

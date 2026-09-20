@@ -6,6 +6,7 @@ import { formatNullable, formatTime } from "./formatters";
 import { chartColors, LineChart } from "./LineChart";
 import { buildDailySeries, buildMetricFieldSeries } from "./powerChartData";
 import { useTimeWindow } from "./useTimeWindow";
+import { fetchJson } from "./api";
 
 type GpuDetail = {
   gpu: GpuIdentity;
@@ -28,9 +29,8 @@ export function GpuDetailModal({ uuid, onClose, onOpenMachine }: {
     let cancelled = false;
     setDetail(undefined);
     setError("");
-    fetch(`/api/gpus/${encodeURIComponent(uuid)}?hours=24`)
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("GPU not found"))))
-      .then((next: GpuDetail) => {
+    fetchJson<GpuDetail>(`/api/gpus/${encodeURIComponent(uuid)}?hours=24`)
+      .then((next) => {
         if (!cancelled) {
           setDetail(next);
         }

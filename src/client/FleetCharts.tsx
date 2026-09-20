@@ -1,23 +1,29 @@
 import { useEffect, useState } from "react";
 import type { FleetHistoryPoint } from "../shared/types";
+import { fetchJsonArray } from "./api";
 import { chartColors, LineChart } from "./LineChart";
 import type { PowerChartPoint } from "./powerChartData";
 import { useTimeWindow } from "./useTimeWindow";
 
 export function FleetCharts() {
   const [points, setPoints] = useState<FleetHistoryPoint[]>([]);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      fetch("/api/fleet-history?hours=24")
-        .then((response) => response.json())
-        .then((next: FleetHistoryPoint[]) => {
+      fetchJsonArray<FleetHistoryPoint>("/api/fleet-history?hours=24")
+        .then((next) => {
           if (!cancelled) {
             setPoints(next);
+            setError("");
           }
         })
-        .catch(() => {});
+        .catch((loadError) => {
+          if (!cancelled) {
+            setError(loadError instanceof Error ? loadError.message : String(loadError));
+          }
+        });
     };
     load();
     const timer = setInterval(load, 60_000);
@@ -59,6 +65,7 @@ export function FleetCharts() {
           </button>
         ) : null}
       </summary>
+      {error ? <p className="load-error">Fleet history unavailable: {error}</p> : null}
       <div className="power-charts">
         <LineChart
           ariaLabel="Total fleet GPU power consumption over time"

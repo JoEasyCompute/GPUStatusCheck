@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { buildSshCommand } from "../shared/ssh";
 import type { EditableRuntimeConfig, GpuIdentity, GpuProcess, MachineWithLatest, PollStatus, ProbeResult, RuntimeConfig, Summary } from "../shared/types";
+import { fetchJson, fetchJsonArray } from "./api";
 import { copyText } from "./clipboard";
 import { FleetCharts } from "./FleetCharts";
 import { GpuDetailModal } from "./GpuDetailModal";
@@ -72,19 +73,18 @@ export function App() {
 
   async function refresh() {
     try {
-      const [summaryResponse, machinesResponse, configResponse, pollStatusResponse, gpusResponse] = await Promise.all([
-        fetch("/api/summary"),
-        fetch("/api/machines"),
-        fetch("/api/config"),
-        fetch("/api/poll-status"),
-        fetch("/api/gpus"),
+      const [nextSummary, nextMachines, nextConfig, nextPollStatus, nextGpus] = await Promise.all([
+        fetchJson<Summary>("/api/summary"),
+        fetchJsonArray<MachineWithLatest>("/api/machines"),
+        fetchJson<RuntimeConfig>("/api/config"),
+        fetchJson<PollStatus>("/api/poll-status"),
+        fetchJsonArray<GpuIdentity>("/api/gpus"),
       ]);
-      setSummary(await summaryResponse.json());
-      const nextMachines = await machinesResponse.json() as MachineWithLatest[];
+      setSummary(nextSummary);
       setMachines(nextMachines);
-      setConfig(await configResponse.json());
-      setPollStatus(await pollStatusResponse.json());
-      setGpus(await gpusResponse.json() as GpuIdentity[]);
+      setConfig(nextConfig);
+      setPollStatus(nextPollStatus);
+      setGpus(nextGpus);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -95,11 +95,7 @@ export function App() {
     setPolling(true);
     setPollMessage("");
     try {
-      const response = await fetch("/api/poll-runs", { method: "POST" });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(body.error || response.statusText);
-      }
+      const body = await fetchJson<{ runId: number; skipped: boolean }>("/api/poll-runs", { method: "POST" });
       if (body.skipped) {
         setPollMessage("Poll already running");
       } else {
@@ -122,16 +118,11 @@ export function App() {
 
     setSavingSettings(true);
     try {
-      const response = await fetch("/api/config", {
+      const nextConfig = await fetchJson<RuntimeConfig>("/api/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({ error: response.statusText }));
-        throw new Error(body.error || response.statusText);
-      }
-      const nextConfig = await response.json() as RuntimeConfig;
       setConfig(nextConfig);
       setSettings({
         machinesPath: nextConfig.machinesPath,
@@ -151,15 +142,11 @@ export function App() {
 
   async function toggleMaintenance(machine: MachineWithLatest) {
     try {
-      const response = await fetch(`/api/machines/${machine.id}`, {
+      await fetchJson<MachineWithLatest>(`/api/machines/${machine.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ maintenance: !machine.maintenance }),
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({ error: response.statusText }));
-        throw new Error(body.error || response.statusText);
-      }
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -208,8 +195,8 @@ export function App() {
     setHistory([]);
     setProcesses([]);
     Promise.all([
-      fetch(`/api/machines/${selectedMachineId}/history?hours=24&limit=1000`).then((response) => response.json()),
-      fetch(`/api/machines/${selectedMachineId}/processes?limit=200`).then((response) => response.json()),
+      fetchJsonArray<ProbeResult>(`/api/machines/${selectedMachineId}/history?hours=24&limit=1000`),
+      fetchJsonArray<GpuProcess>(`/api/machines/${selectedMachineId}/processes?limit=200`),
     ]).then(([nextHistory, nextProcesses]) => {
       if (cancelled) {
         return;

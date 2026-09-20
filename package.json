@@ -3,12 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "npm@10.9.8",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "tsx src/server/index.ts",
     "dev:client": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "start": "tsx src/server/index.ts",
     "test": "vitest run",
+    "test:python": "python3 -m unittest test_gpu_status_check.py",
+    "typecheck": "tsc --noEmit",
+    "check:shell": "bash scripts/check-shell.sh",
+    "check": "npm test && npm run test:python && npm run build && npm run check:shell",
     "agent:install": "tsx scripts/install-agent.ts"
   },
   "dependencies": {
@@ -19,6 +27,7 @@
     "fastify": "^5.2.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "tsx": "^4.19.2",
     "vite": "^8.1.5"
   },
   "devDependencies": {
@@ -26,7 +35,6 @@
     "@types/node": "^22.10.5",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10"
   }

@@ -7,7 +7,8 @@ shared remote script `scripts/remote-probe.sh`.
 ## Commands
 
 ```bash
-npm test                        # vitest (tests/)
+npm run check                   # TS/Python tests, typecheck, build, shell syntax
+npm test                        # vitest (tests/) only
 npm run build                   # tsc --noEmit + vite build -> dist/client
 npm start                       # production server (serves dist/client + API)
 npm run dev:client              # vite dev server on :5173 (proxies /api to :4100)
@@ -17,11 +18,37 @@ python3 test_gpu_status_check.py  # Python CLI tests
 Locally the operator runs the server detached:
 `nohup npm start > .omx/dashboard-server.log 2>&1 &` on port 4100.
 Production runs on a remote host as the systemd service `gpustatuscheck`
-(deploy there: `git pull`, `npm run build` for client changes,
+(template: `deploy/gpustatuscheck.service`; deploy there with `git pull`,
+`npm ci`, `npm run check`, `npm run build`,
 `sudo systemctl restart gpustatuscheck` for server changes; logs via
 `journalctl -u gpustatuscheck`).
 Server-side changes need a server restart to take effect; client-only changes
 just need `npm run build` (static files are served from disk per request).
+Node 22.12 or newer is required. Record the pre-deploy commit for rollback and
+verify `http://127.0.0.1:4100/api/health` after every restart.
+
+The current public deployment intentionally leaves read and mutating endpoints
+unauthenticated. Do not mistake reachability for authorization: any reachable
+client can trigger polls, toggle maintenance, and update exposed settings.
+
+## Database safety
+
+- Keep `GPUCHECK_RETENTION_DAYS=30` unless a capacity review approves another
+  value. `GPUCHECK_MIN_FREE_DISK_BYTES=5368709120` makes health return 503 below
+  5 GiB free.
+- Before retention or database maintenance, use SQLite `.backup` to a separate
+  filesystem, require `PRAGMA integrity_check` to return `ok`, record a SHA-256
+  checksum, and copy the verified backup off-host.
+- Never run in-place `VACUUM` when free space is tight. Compaction requires a
+  separately approved maintenance window and `VACUUM INTO` a destination with
+  verified capacity.
+- Stop `gpustatuscheck` and every other database writer before creating the
+  final `VACUUM INTO` copy, and keep them stopped through verification and the
+  swap. Keep the verified original database off the root filesystem until the
+  replacement passes local health plus representative machine, history, and
+  GPU API checks.
+- Roll back by stopping the service, restoring the verified original database,
+  restarting, and checking `/api/health` before reopening normal operations.
 
 ## Architecture
 
