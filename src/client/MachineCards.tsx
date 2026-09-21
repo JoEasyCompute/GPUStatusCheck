@@ -11,11 +11,17 @@ export function MachineCards({
   selectedMachineId,
   onSelect,
   groupBy,
+  adminUnlocked,
+  selectedMachineIds,
+  onToggleMachineSelection,
 }: {
   machines: MachineWithLatest[];
   selectedMachineId?: number;
   onSelect: (id: number) => void;
   groupBy: MachineGroupBy;
+  adminUnlocked: boolean;
+  selectedMachineIds: number[];
+  onToggleMachineSelection: (id: number) => void;
 }) {
   const groups = useMemo(() => buildMachineGroups(machines, groupBy), [machines, groupBy]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -86,6 +92,9 @@ export function MachineCards({
                     machine={machine}
                     selected={machine.id === selectedMachineId}
                     onSelect={onSelect}
+                    adminUnlocked={adminUnlocked}
+                    agentSelected={selectedMachineIds.includes(machine.id!)}
+                    onToggleMachineSelection={onToggleMachineSelection}
                   />
                 ))}
               </div>
@@ -101,10 +110,16 @@ function MachineCard({
   machine,
   selected,
   onSelect,
+  adminUnlocked,
+  agentSelected,
+  onToggleMachineSelection,
 }: {
   machine: MachineWithLatest;
   selected: boolean;
   onSelect: (id: number) => void;
+  adminUnlocked: boolean;
+  agentSelected: boolean;
+  onToggleMachineSelection: (id: number) => void;
 }) {
   const latest = machine.latest;
   const status = latest?.status ?? "unknown";
@@ -122,6 +137,15 @@ function MachineCard({
       }}
     >
       <div className="card-head">
+        {adminUnlocked ? (
+          <input
+            type="checkbox"
+            aria-label={`Select ${machine.name}`}
+            checked={agentSelected}
+            onChange={() => onToggleMachineSelection(machine.id!)}
+            onClick={(event) => event.stopPropagation()}
+          />
+        ) : null}
         <strong className="card-name" title={machine.name}>{machine.name}</strong>
         {machine.maintenance ? <span className="chip maintenance" title="Alerts muted while in maintenance">M</span> : null}
         <span className={`status ${status}`}>{formatStatus(status)}</span>
@@ -140,4 +164,3 @@ function MachineCard({
     </div>
   );
 }
-

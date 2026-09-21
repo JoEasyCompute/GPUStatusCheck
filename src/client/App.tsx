@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useReducer, useState } from "react";
 import { buildSshCommand } from "../shared/ssh";
-import type { AdminStatus, EditableRuntimeConfig, GpuIdentity, GpuProcess, MachineWithLatest, PollStatus, ProbeResult, RuntimeConfig, Summary } from "../shared/types";
+import type { AdminStatus, AgentAction, AgentOperation, AgentOperationDetail, EditableRuntimeConfig, GpuIdentity, GpuProcess, MachineWithLatest, PollStatus, ProbeResult, RuntimeConfig, Summary } from "../shared/types";
 import { AdminAccess } from "./AdminAccess";
+import { AgentOperationDialog } from "./AgentOperationDialog";
+import { AgentOperationDrawer } from "./AgentOperationDrawer";
+import { selectVisibleMachines, toggleMachineSelection } from "./agentAdmin";
 import { adminSessionReducer, clearAdminKey, initialAdminSessionState, loadAdminKey, saveAdminKey } from "./adminSession";
 import { ApiError, fetchAdminJson, fetchJson, fetchJsonArray } from "./api";
 import { copyText } from "./clipboard";
@@ -80,6 +83,11 @@ export function App() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
+  const [agentDialogOpen, setAgentDialogOpen] = useState(false);
+  const [agentAction, setAgentAction] = useState<AgentAction>("install");
+  const [submittingAgentOperation, setSubmittingAgentOperation] = useState(false);
+  const [agentOperation, setAgentOperation] = useState<AgentOperationDetail | undefined>();
+  const [agentOperationError, setAgentOperationError] = useState("");
 
   function clearStoredAdminKey() {
     try {
@@ -117,6 +125,59 @@ export function App() {
   function lockAdmin() {
     clearStoredAdminKey();
     dispatchAdmin({ type: "lock" });
+    setAgentDialogOpen(false);
+  }
+
+  function toggleAgentSelection(machineId: number) {
+    dispatchAdmin({ type: "selection", machineIds: toggleMachineSelection(admin.selectedMachineIds, machineId) });
+  }
+
+  function selectVisibleForAgents() {
+    dispatchAdmin({ type: "selection", machineIds: selectVisibleMachines(admin.selectedMachineIds, filteredMachines) });
+  }
+
+  async function submitAgentOperation() {
+    if (admin.mode !== "unlocked") return;
+    const activeIds = new Set(machines.filter((machine) => machine.active !== false).map((machine) => machine.id));
+    const machineIds = [...new Set(admin.selectedMachineIds)].filter((id) => activeIds.has(id));
+    if (machineIds.length === 0) {
+      setError("Select at least one active machine");
+      return;
+    }
+    setSubmittingAgentOperation(true);
+    try {
+      const operation = await fetchAdminJson<AgentOperationDetail>(admin.key, "/api/agent-operations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: agentAction, machineIds }),
+      });
+      setAgentOperation(operation);
+      dispatchAdmin({ type: "lastOperation", operation });
+      dispatchAdmin({ type: "selection", machineIds: [] });
+      setAgentDialogOpen(false);
+      setAgentOperationError("");
+    } catch (err) {
+      handleAdminError(err);
+    } finally {
+      setSubmittingAgentOperation(false);
+    }
+  }
+
+  async function openRecentAgentOperation() {
+    if (admin.mode !== "unlocked") return;
+    try {
+      const recent = await fetchAdminJson<AgentOperation[]>(admin.key, "/api/agent-operations?limit=20");
+      if (recent.length === 0) {
+        setError("No agent operations recorded yet");
+        return;
+      }
+      const detail = await fetchAdminJson<AgentOperationDetail>(admin.key, `/api/agent-operations/${recent[0]!.id}`);
+      setAgentOperation(detail);
+      dispatchAdmin({ type: "lastOperation", operation: detail });
+      setAgentOperationError("");
+    } catch (err) {
+      handleAdminError(err);
+    }
   }
 
   async function refresh() {
@@ -238,6 +299,30 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!agentOperation || admin.mode !== "unlocked" || !["queued", "running"].includes(agentOperation.status)) return;
+    let cancelled = false;
+    const load = () => {
+      fetchAdminJson<AgentOperationDetail>(admin.key, `/api/agent-operations/${agentOperation.id}`)
+        .then((detail) => {
+          if (cancelled) return;
+          setAgentOperation(detail);
+          dispatchAdmin({ type: "lastOperation", operation: detail });
+          setAgentOperationError("");
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setAgentOperationError(err instanceof Error ? err.message : String(err));
+          handleAdminError(err);
+        });
+    };
+    const timer = window.setInterval(load, 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [agentOperation?.id, agentOperation?.status, admin.mode, admin.key]);
+
+  useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
@@ -330,6 +415,7 @@ export function App() {
   }, [gpus, search, gpuTypeFilter]);
 
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId);
+  const selectedAgentMachines = machines.filter((machine) => machine.id !== undefined && admin.selectedMachineIds.includes(machine.id));
 
   return (
     <main>
@@ -499,6 +585,16 @@ export function App() {
             <option value="location">Group by location</option>
           </select>
         ) : null}
+        {admin.mode === "unlocked" ? (
+          <div className="agent-admin-actions">
+            {viewMode !== "gpus" ? <button onClick={selectVisibleForAgents}>Select visible</button> : null}
+            <button onClick={() => dispatchAdmin({ type: "selection", machineIds: [] })} disabled={admin.selectedMachineIds.length === 0}>Clear selection</button>
+            <button className="primary" onClick={() => setAgentDialogOpen(true)} disabled={admin.selectedMachineIds.length === 0}>
+              Manage agents ({admin.selectedMachineIds.length})
+            </button>
+            <button onClick={() => void openRecentAgentOperation()}>Recent operations</button>
+          </div>
+        ) : null}
         <span className="toolbar-count">
           {viewMode === "gpus"
             ? `${filteredGpus.length} of ${gpus.length} GPUs`
@@ -508,10 +604,26 @@ export function App() {
 
       <section className="layout">
         {viewMode === "table" ? (
-          <MachineTable machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} groupBy={groupBy} />
+          <MachineTable
+            machines={filteredMachines}
+            selectedMachineId={selectedMachineId}
+            onSelect={setSelectedMachineId}
+            groupBy={groupBy}
+            adminUnlocked={admin.mode === "unlocked"}
+            selectedMachineIds={admin.selectedMachineIds}
+            onToggleMachineSelection={toggleAgentSelection}
+          />
         ) : null}
         {viewMode === "cards" ? (
-          <MachineCards machines={filteredMachines} selectedMachineId={selectedMachineId} onSelect={setSelectedMachineId} groupBy={groupBy} />
+          <MachineCards
+            machines={filteredMachines}
+            selectedMachineId={selectedMachineId}
+            onSelect={setSelectedMachineId}
+            groupBy={groupBy}
+            adminUnlocked={admin.mode === "unlocked"}
+            selectedMachineIds={admin.selectedMachineIds}
+            onToggleMachineSelection={toggleAgentSelection}
+          />
         ) : null}
         {viewMode === "gpus" ? (
           <GpuInventory gpus={filteredGpus} selectedUuid={selectedGpuUuid} onSelect={setSelectedGpuUuid} />
@@ -547,6 +659,31 @@ export function App() {
           onOpenMachine={(machineId) => {
             setSelectedGpuUuid(undefined);
             setSelectedMachineId(machineId);
+          }}
+        />
+      ) : null}
+
+      {agentDialogOpen ? (
+        <AgentOperationDialog
+          machines={selectedAgentMachines}
+          action={agentAction}
+          concurrency={config?.agentInstallJobs ?? 4}
+          submitting={submittingAgentOperation}
+          onActionChange={setAgentAction}
+          onConfirm={() => void submitAgentOperation()}
+          onClose={() => setAgentDialogOpen(false)}
+        />
+      ) : null}
+
+      {agentOperation ? (
+        <AgentOperationDrawer
+          operation={agentOperation}
+          loadingError={agentOperationError}
+          onClose={() => setAgentOperation(undefined)}
+          onRetry={(machineIds) => {
+            dispatchAdmin({ type: "selection", machineIds });
+            setAgentAction(agentOperation.action);
+            setAgentDialogOpen(true);
           }}
         />
       ) : null}

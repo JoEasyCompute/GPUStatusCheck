@@ -12,11 +12,17 @@ export function MachineTable({
   selectedMachineId,
   onSelect,
   groupBy,
+  adminUnlocked,
+  selectedMachineIds,
+  onToggleMachineSelection,
 }: {
   machines: MachineWithLatest[];
   selectedMachineId?: number;
   onSelect: (id: number) => void;
   groupBy: MachineGroupBy;
+  adminUnlocked: boolean;
+  selectedMachineIds: number[];
+  onToggleMachineSelection: (id: number) => void;
 }) {
   const [sort, setSort] = useState<MachineSort>({ key: "name", direction: "asc" });
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -64,6 +70,7 @@ export function MachineTable({
       <table>
         <thead>
           <tr>
+            {adminUnlocked ? <th className="selection-cell"><span className="sr-only">Select</span></th> : null}
             <SortableHeader label="Machine" sortKey="name" sort={sort} onSort={toggleSort} />
             <SortableHeader label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
             <SortableHeader label="Location" sortKey="location" sort={sort} onSort={toggleSort} />
@@ -87,7 +94,7 @@ export function MachineTable({
                   aria-expanded={!collapsed.has(`${groupBy}:${group.label}`)}
                   onClick={() => toggleGroup(group.label!)}
                 >
-                  <td colSpan={11}>
+                  <td colSpan={adminUnlocked ? 12 : 11}>
                     <span className="caret" aria-hidden="true">{collapsed.has(`${groupBy}:${group.label}`) ? "▸" : "▾"}</span>
                     {group.label || "Unassigned"}
                     <GroupStats stats={computeGroupStats(group.machines)} />
@@ -110,7 +117,7 @@ export function MachineTable({
             ...(group.label !== undefined && chartsOpen.has(`${groupBy}:${group.label}`) && (groupBy === "owner" || groupBy === "location")
               ? [(
                 <tr key={`group-charts-${group.label}`} className="group-charts-row">
-                  <td colSpan={11}>
+                  <td colSpan={adminUnlocked ? 12 : 11}>
                     <GroupCharts groupBy={groupBy} label={group.label} />
                   </td>
                 </tr>
@@ -118,6 +125,17 @@ export function MachineTable({
               : []),
             ...(group.label !== undefined && collapsed.has(`${groupBy}:${group.label}`) ? [] : group.machines).map((machine) => (
             <tr key={machine.id} className={machine.id === selectedMachineId ? "selected" : ""} onClick={() => onSelect(machine.id!)}>
+              {adminUnlocked ? (
+                <td className="selection-cell">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${machine.name}`}
+                    checked={selectedMachineIds.includes(machine.id!)}
+                    onChange={() => onToggleMachineSelection(machine.id!)}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                </td>
+              ) : null}
               <td className="name-cell">{machine.name}</td>
               <td>
                 <span className={`status ${machine.latest?.status ?? "unknown"}`}>{formatStatus(machine.latest?.status)}</span>

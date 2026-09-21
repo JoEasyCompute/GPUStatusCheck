@@ -256,6 +256,77 @@ input::placeholder {
   max-width: 260px;
 }
 
+.agent-admin-actions,
+.agent-action-options {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.selection-cell {
+  width: 36px;
+}
+
+.machine-card .card-head input[type="checkbox"] {
+  flex: 0 0 auto;
+}
+
+.agent-operation-dialog {
+  max-width: 680px;
+}
+
+.agent-action-options .active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.agent-danger {
+  color: var(--crit-ink);
+}
+
+.agent-target-list {
+  max-height: 300px;
+  overflow: auto;
+}
+
+.agent-target-list span {
+  color: var(--ink-3);
+  margin-left: 8px;
+}
+
+.agent-operation-drawer {
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: var(--shadow-modal);
+  height: 100vh;
+  max-width: min(720px, 92vw);
+  overflow: auto;
+  padding: 20px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 100%;
+  z-index: 30;
+}
+
+.agent-operation-item {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+}
+
+.agent-operation-item summary {
+  align-items: center;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(120px, 1fr) auto minmax(140px, 2fr) auto;
+}
+
+.agent-operation-item pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 /* ---------- stat tiles ---------- */
 
 .summary-grid {
