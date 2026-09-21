@@ -17,6 +17,11 @@ export type AppConfig = {
   pollOnStartup: boolean;
   retentionDays: number;
   minFreeDiskBytes: number;
+  adminApiKey: string;
+  agentInstallJobs: number;
+  agentMaxBatch: number;
+  agentOperationRetentionDays: number;
+  agentOutputMaxChars: number;
   telegramBotToken: string;
   telegramChatId: string;
   slackBotToken: string;
@@ -53,6 +58,11 @@ export function loadConfig(env = process.env): AppConfig {
     pollOnStartup: !boolEnv(value("GPUCHECK_DISABLE_STARTUP_POLL"), false),
     retentionDays: numberEnv(value("GPUCHECK_RETENTION_DAYS"), 30),
     minFreeDiskBytes: numberEnv(value("GPUCHECK_MIN_FREE_DISK_BYTES"), 5 * 1024 ** 3),
+    adminApiKey: value("GPUCHECK_ADMIN_API_KEY") || "",
+    agentInstallJobs: numberEnv(value("GPUCHECK_AGENT_INSTALL_JOBS"), 4),
+    agentMaxBatch: numberEnv(value("GPUCHECK_AGENT_MAX_BATCH"), 100),
+    agentOperationRetentionDays: numberEnv(value("GPUCHECK_AGENT_OPERATION_RETENTION_DAYS"), 30),
+    agentOutputMaxChars: numberEnv(value("GPUCHECK_AGENT_OUTPUT_MAX_CHARS"), 4000),
     telegramBotToken: value("TELEGRAM_BOT_TOKEN") || "",
     telegramChatId: value("TELEGRAM_CHAT_ID") || "",
     slackBotToken: value("SLACK_BOT_TOKEN") || "",

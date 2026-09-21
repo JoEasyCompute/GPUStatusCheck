@@ -212,7 +212,14 @@ export type RuntimeConfig = {
   processArgsMaxChars: number;
   pollOnStartup: boolean;
   minFreeDiskBytes: number;
+  agentInstallJobs: number;
+  agentMaxBatch: number;
   port: number;
+};
+
+export type AdminStatus = {
+  enabled: boolean;
+  authenticated: boolean;
 };
 
 export type StorageHealth = {

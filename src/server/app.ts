@@ -33,6 +33,8 @@ export function buildApp(options: BuildAppOptions) {
     processArgsMaxChars: options.config.processArgsMaxChars,
     pollOnStartup: options.config.pollOnStartup,
     minFreeDiskBytes: options.config.minFreeDiskBytes,
+    agentInstallJobs: options.config.agentInstallJobs,
+    agentMaxBatch: options.config.agentMaxBatch,
     port: options.config.port,
   });
 

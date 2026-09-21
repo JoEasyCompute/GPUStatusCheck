@@ -259,6 +259,7 @@ describe("scheduler drain wiring", () => {
       user: "ezc", fallbackUser: "", keyPath: "~/.ssh/test",
       connectTimeoutSeconds: 10, probeTimeoutSeconds: 60, jobs: 1, pollIntervalSeconds: 300,
       skipLogs: true, processArgsMaxChars: 512, pollOnStartup: false, retentionDays: 30, minFreeDiskBytes: 5 * 1024 ** 3,
+      adminApiKey: "", agentInstallJobs: 4, agentMaxBatch: 100, agentOperationRetentionDays: 30, agentOutputMaxChars: 4000,
       telegramBotToken: "", telegramChatId: "",
       slackBotToken: "", slackChannelsPath: "", slackDryRun: false,
       agentDrainEnabled: options.drainEnabled ?? true, agentDrainTimeoutSeconds: 120, agentDrainMaxLines: 600, agentRetentionDays: 21,

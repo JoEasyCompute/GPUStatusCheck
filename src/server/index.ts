@@ -1,8 +1,13 @@
 import { buildApp } from "./app";
+import { adminKeyWarning } from "./adminAuth";
 import { loadConfig } from "./config";
 import { createDatabase } from "./db";
 
 const config = loadConfig();
+const keyWarning = adminKeyWarning(config.adminApiKey);
+if (keyWarning) {
+  console.warn(keyWarning);
+}
 const db = createDatabase(config.dbPath);
 db.migrate();
 
