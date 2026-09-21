@@ -224,6 +224,39 @@ export type AdminStatus = {
 
 export type AgentAction = "install" | "uninstall";
 
+export type AgentOperationStatus = "queued" | "running" | "complete" | "failed" | "interrupted";
+export type AgentOperationItemStatus = "queued" | "running" | "succeeded" | "skipped" | "failed" | "interrupted";
+
+export type AgentOperation = {
+  id: number;
+  action: AgentAction;
+  status: AgentOperationStatus;
+  machineCount: number;
+  succeededCount: number;
+  skippedCount: number;
+  failedCount: number;
+  interruptedCount: number;
+  queuedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+};
+
+export type AgentOperationItem = {
+  id: number;
+  operationId: number;
+  machineId: number;
+  machineName: string;
+  status: AgentOperationItemStatus;
+  startedAt?: string;
+  finishedAt?: string;
+  summary: string;
+  output: string;
+};
+
+export type AgentOperationDetail = AgentOperation & {
+  items: AgentOperationItem[];
+};
+
 export type StorageHealth = {
   databaseBytes: number | null;
   freeDiskBytes: number | null;

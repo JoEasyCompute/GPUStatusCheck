@@ -1,7 +1,26 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import type { FleetHistoryPoint, GpuDailyStat, GpuDownNote, GpuIdentity, GpuMetric, GpuProcess, GpuSighting, GroupHistoryPoint, Machine, MachineWithLatest, PollRun, ProbeResult, Summary } from "../shared/types";
+import type {
+  AgentAction,
+  AgentOperation,
+  AgentOperationDetail,
+  AgentOperationItem,
+  AgentOperationItemStatus,
+  FleetHistoryPoint,
+  GpuDailyStat,
+  GpuDownNote,
+  GpuIdentity,
+  GpuMetric,
+  GpuProcess,
+  GpuSighting,
+  GroupHistoryPoint,
+  Machine,
+  MachineWithLatest,
+  PollRun,
+  ProbeResult,
+  Summary,
+} from "../shared/types";
 import type { DropIncident, RosterEntry } from "./gpuDrops";
 
 /** Shape insertAgentSample needs from a parsed agent record (a ParsedProbe). */
@@ -190,6 +209,35 @@ export function createDatabase(dbPath: string) {
         FOREIGN KEY(machine_id) REFERENCES machines(id)
       );
 
+      CREATE TABLE IF NOT EXISTS agent_operations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        action TEXT NOT NULL,
+        status TEXT NOT NULL,
+        machine_count INTEGER NOT NULL,
+        succeeded_count INTEGER NOT NULL DEFAULT 0,
+        skipped_count INTEGER NOT NULL DEFAULT 0,
+        failed_count INTEGER NOT NULL DEFAULT 0,
+        interrupted_count INTEGER NOT NULL DEFAULT 0,
+        queued_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_operation_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operation_id INTEGER NOT NULL,
+        machine_id INTEGER NOT NULL,
+        machine_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        summary TEXT NOT NULL DEFAULT '',
+        output TEXT NOT NULL DEFAULT '',
+        UNIQUE(operation_id, machine_id),
+        FOREIGN KEY(operation_id) REFERENCES agent_operations(id) ON DELETE CASCADE,
+        FOREIGN KEY(machine_id) REFERENCES machines(id)
+      );
+
       CREATE TABLE IF NOT EXISTS gpu_drop_incidents (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         machine_id INTEGER NOT NULL,
@@ -282,6 +330,9 @@ export function createDatabase(dbPath: string) {
       CREATE INDEX IF NOT EXISTS idx_gpu_drop_incidents_machine ON gpu_drop_incidents(machine_id, closed_at);
       CREATE INDEX IF NOT EXISTS idx_gpu_drop_members_incident ON gpu_drop_members(incident_id);
       CREATE INDEX IF NOT EXISTS idx_agent_kernel_events_machine ON agent_kernel_events(machine_id, event_at);
+      CREATE INDEX IF NOT EXISTS idx_agent_operations_queued ON agent_operations(queued_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_agent_operation_items_operation ON agent_operation_items(operation_id, id);
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_operation_active_machine ON agent_operation_items(machine_id) WHERE status IN ('queued', 'running');
       CREATE INDEX IF NOT EXISTS idx_probe_results_machine_source_checked ON probe_results(machine_id, source, checked_at);
       CREATE UNIQUE INDEX IF NOT EXISTS uq_probe_results_agent_sample ON probe_results(machine_id, checked_at) WHERE source = 'agent';
     `);
@@ -1003,6 +1054,118 @@ export function createDatabase(dbPath: string) {
     });
   }
 
+  function createAgentOperation(
+    action: AgentAction,
+    targets: Array<{ machineId: number; machineName: string }>,
+    at = new Date().toISOString(),
+  ): AgentOperationDetail {
+    const unique = new Set(targets.map((target) => target.machineId));
+    if (unique.size !== targets.length) {
+      throw new Error("duplicate machine id in agent operation");
+    }
+    if (targets.length === 0) {
+      throw new Error("agent operation requires at least one machine");
+    }
+    return db.transaction(() => {
+      const info = db.prepare(`
+        INSERT INTO agent_operations (action, status, machine_count, queued_at)
+        VALUES (?, 'queued', ?, ?)
+      `).run(action, targets.length, at);
+      const operationId = Number(info.lastInsertRowid);
+      const insert = db.prepare(`
+        INSERT INTO agent_operation_items (operation_id, machine_id, machine_name, status)
+        VALUES (?, ?, ?, 'queued')
+      `);
+      for (const target of targets) {
+        insert.run(operationId, target.machineId, target.machineName);
+      }
+      return getAgentOperation(operationId)!;
+    })();
+  }
+
+  function getAgentOperation(id: number): AgentOperationDetail | undefined {
+    const row = db.prepare("SELECT * FROM agent_operations WHERE id = ?").get(id) as AgentOperationRow | undefined;
+    if (!row) return undefined;
+    const items = db.prepare("SELECT * FROM agent_operation_items WHERE operation_id = ? ORDER BY id ASC").all(id) as AgentOperationItemRow[];
+    return { ...rowToAgentOperation(row), items: items.map(rowToAgentOperationItem) };
+  }
+
+  function listAgentOperations(limit = 20): AgentOperation[] {
+    const rows = db.prepare("SELECT * FROM agent_operations ORDER BY queued_at DESC, id DESC LIMIT ?").all(limit) as AgentOperationRow[];
+    return rows.map(rowToAgentOperation);
+  }
+
+  function markAgentOperationRunning(id: number, at = new Date().toISOString()): void {
+    db.prepare("UPDATE agent_operations SET status = 'running', started_at = ? WHERE id = ? AND status = 'queued'").run(at, id);
+  }
+
+  function markAgentOperationItemRunning(id: number, at = new Date().toISOString()): void {
+    db.prepare("UPDATE agent_operation_items SET status = 'running', started_at = ? WHERE id = ? AND status = 'queued'").run(at, id);
+  }
+
+  function finishAgentOperationItem(
+    id: number,
+    status: Exclude<AgentOperationItemStatus, "queued" | "running">,
+    summary: string,
+    output: string,
+    at = new Date().toISOString(),
+  ): void {
+    db.prepare(`
+      UPDATE agent_operation_items
+      SET status = ?, summary = ?, output = ?, finished_at = ?
+      WHERE id = ? AND status IN ('queued', 'running')
+    `).run(status, summary, output, at, id);
+  }
+
+  function finalizeAgentOperation(id: number, at = new Date().toISOString()): AgentOperationDetail {
+    const counts = db.prepare(`
+      SELECT
+        SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
+        SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+        SUM(CASE WHEN status = 'interrupted' THEN 1 ELSE 0 END) AS interrupted
+      FROM agent_operation_items WHERE operation_id = ?
+    `).get(id) as { succeeded: number; skipped: number; failed: number; interrupted: number };
+    const status = counts.failed > 0 ? "failed" : counts.interrupted > 0 ? "interrupted" : "complete";
+    db.prepare(`
+      UPDATE agent_operations SET
+        status = ?, succeeded_count = ?, skipped_count = ?, failed_count = ?, interrupted_count = ?, finished_at = ?
+      WHERE id = ?
+    `).run(status, counts.succeeded, counts.skipped, counts.failed, counts.interrupted, at, id);
+    const operation = getAgentOperation(id);
+    if (!operation) throw new Error(`agent operation ${id} not found`);
+    return operation;
+  }
+
+  function interruptAgentOperations(at = new Date().toISOString()): number {
+    return db.transaction(() => {
+      const rows = db.prepare("SELECT id FROM agent_operations WHERE status IN ('queued', 'running')").all() as Array<{ id: number }>;
+      db.prepare(`
+        UPDATE agent_operation_items SET status = 'interrupted', summary = 'server restarted', finished_at = ?
+        WHERE status IN ('queued', 'running')
+      `).run(at);
+      for (const row of rows) finalizeAgentOperation(row.id, at);
+      return rows.length;
+    })();
+  }
+
+  function pruneAgentOperations(retentionDays: number, now = new Date()): number {
+    if (retentionDays <= 0) return 0;
+    const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+    return db.transaction(() => {
+      const rows = db.prepare(`
+        SELECT id FROM agent_operations
+        WHERE status NOT IN ('queued', 'running') AND finished_at IS NOT NULL AND finished_at < ?
+      `).all(cutoff) as Array<{ id: number }>;
+      if (rows.length === 0) return 0;
+      const ids = rows.map((row) => row.id);
+      const placeholders = ids.map(() => "?").join(",");
+      db.prepare(`DELETE FROM agent_operation_items WHERE operation_id IN (${placeholders})`).run(...ids);
+      db.prepare(`DELETE FROM agent_operations WHERE id IN (${placeholders})`).run(...ids);
+      return ids.length;
+    })();
+  }
+
   function getGpuDailyStatsWatermark(): string | null {
     return (db.prepare("SELECT MAX(day) AS day FROM gpu_daily_stats").get() as { day: string | null }).day;
   }
@@ -1124,6 +1287,15 @@ export function createDatabase(dbPath: string) {
     listKernelEvents,
     getAgentState,
     upsertAgentState,
+    createAgentOperation,
+    getAgentOperation,
+    listAgentOperations,
+    markAgentOperationRunning,
+    markAgentOperationItemRunning,
+    finishAgentOperationItem,
+    finalizeAgentOperation,
+    interruptAgentOperations,
+    pruneAgentOperations,
     getGpuDailyStatsWatermark,
     pruneHistory,
     close,
@@ -1203,6 +1375,62 @@ function ensureColumn(db: Sqlite, table: string, column: string, definition: str
   if (!rows.some((row) => row.name === column)) {
     db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
   }
+}
+
+type AgentOperationRow = {
+  id: number;
+  action: AgentAction;
+  status: AgentOperation["status"];
+  machine_count: number;
+  succeeded_count: number;
+  skipped_count: number;
+  failed_count: number;
+  interrupted_count: number;
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+type AgentOperationItemRow = {
+  id: number;
+  operation_id: number;
+  machine_id: number;
+  machine_name: string;
+  status: AgentOperationItemStatus;
+  started_at: string | null;
+  finished_at: string | null;
+  summary: string;
+  output: string;
+};
+
+function rowToAgentOperation(row: AgentOperationRow): AgentOperation {
+  return {
+    id: row.id,
+    action: row.action,
+    status: row.status,
+    machineCount: row.machine_count,
+    succeededCount: row.succeeded_count,
+    skippedCount: row.skipped_count,
+    failedCount: row.failed_count,
+    interruptedCount: row.interrupted_count,
+    queuedAt: row.queued_at,
+    startedAt: row.started_at ?? undefined,
+    finishedAt: row.finished_at ?? undefined,
+  };
+}
+
+function rowToAgentOperationItem(row: AgentOperationItemRow): AgentOperationItem {
+  return {
+    id: row.id,
+    operationId: row.operation_id,
+    machineId: row.machine_id,
+    machineName: row.machine_name,
+    status: row.status,
+    startedAt: row.started_at ?? undefined,
+    finishedAt: row.finished_at ?? undefined,
+    summary: row.summary,
+    output: row.output,
+  };
 }
 
 type MachineRow = {

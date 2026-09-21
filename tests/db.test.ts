@@ -5,6 +5,108 @@ import { join } from "node:path";
 import { createDatabase } from "../src/server/db";
 
 describe("database", () => {
+  it("creates agent operations transactionally and prevents active machine overlap", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-agent-operation-create-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+    const alpha = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22 });
+    const beta = db.upsertMachine({ name: "beta", ip: "10.0.0.2", sshHost: "10.0.0.2", sshPort: 22 });
+
+    const operation = db.createAgentOperation("install", [
+      { machineId: alpha.id!, machineName: "alpha" },
+      { machineId: beta.id!, machineName: "beta" },
+    ], "2026-09-21T08:00:00.000Z");
+
+    expect(operation).toMatchObject({ action: "install", status: "queued", machineCount: 2, queuedAt: "2026-09-21T08:00:00.000Z" });
+    expect(operation.items.map((item) => ({ machineId: item.machineId, machineName: item.machineName, status: item.status }))).toEqual([
+      { machineId: alpha.id, machineName: "alpha", status: "queued" },
+      { machineId: beta.id, machineName: "beta", status: "queued" },
+    ]);
+    expect(() => db.createAgentOperation("install", [
+      { machineId: alpha.id!, machineName: "alpha" },
+      { machineId: alpha.id!, machineName: "alpha" },
+    ])).toThrow("duplicate machine id");
+    expect(db.listAgentOperations()).toHaveLength(1);
+    expect(() => db.createAgentOperation("uninstall", [{ machineId: alpha.id!, machineName: "alpha" }])).toThrow();
+
+    db.finishAgentOperationItem(operation.items[0]!.id, "succeeded", "installed", "active", "2026-09-21T08:01:00.000Z");
+    expect(() => db.createAgentOperation("uninstall", [{ machineId: alpha.id!, machineName: "alpha" }])).not.toThrow();
+    db.close();
+  });
+
+  it("tracks agent operation lifecycle and computes terminal aggregates", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-agent-operation-lifecycle-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+    const targets = ["alpha", "beta", "gamma"].map((name, index) => {
+      const machine = db.upsertMachine({ name, ip: `10.0.0.${index + 1}`, sshHost: `10.0.0.${index + 1}`, sshPort: 22 });
+      return { machineId: machine.id!, machineName: name };
+    });
+    const operation = db.createAgentOperation("install", targets, "2026-09-21T08:00:00.000Z");
+
+    db.markAgentOperationRunning(operation.id, "2026-09-21T08:00:10.000Z");
+    for (const item of operation.items) db.markAgentOperationItemRunning(item.id, "2026-09-21T08:00:20.000Z");
+    db.finishAgentOperationItem(operation.items[0]!.id, "succeeded", "installed", "active", "2026-09-21T08:01:00.000Z");
+    db.finishAgentOperationItem(operation.items[1]!.id, "skipped", "no sudo", "", "2026-09-21T08:01:10.000Z");
+    db.finishAgentOperationItem(operation.items[2]!.id, "failed", "ssh failed", "timeout", "2026-09-21T08:01:20.000Z");
+    const final = db.finalizeAgentOperation(operation.id, "2026-09-21T08:01:30.000Z");
+
+    expect(final).toMatchObject({
+      status: "failed",
+      succeededCount: 1,
+      skippedCount: 1,
+      failedCount: 1,
+      interruptedCount: 0,
+      finishedAt: "2026-09-21T08:01:30.000Z",
+    });
+    expect(final.items.map((item) => item.status)).toEqual(["succeeded", "skipped", "failed"]);
+    db.close();
+  });
+
+  it("interrupts unfinished agent operations and releases their machine locks", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-agent-operation-interrupt-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+    const machine = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22 });
+    const operation = db.createAgentOperation("install", [{ machineId: machine.id!, machineName: "alpha" }]);
+    db.markAgentOperationRunning(operation.id);
+    db.markAgentOperationItemRunning(operation.items[0]!.id);
+
+    expect(db.interruptAgentOperations("2026-09-21T09:00:00.000Z")).toBe(1);
+    expect(db.getAgentOperation(operation.id)).toMatchObject({
+      status: "interrupted",
+      interruptedCount: 1,
+      items: [expect.objectContaining({ status: "interrupted" })],
+    });
+    expect(() => db.createAgentOperation("uninstall", [{ machineId: machine.id!, machineName: "alpha" }])).not.toThrow();
+    db.close();
+  });
+
+  it("prunes old terminal agent operations but retains recent and active work", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-agent-operation-prune-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+    const machines = ["old", "recent", "active"].map((name, index) => db.upsertMachine({
+      name,
+      ip: `10.0.1.${index + 1}`,
+      sshHost: `10.0.1.${index + 1}`,
+      sshPort: 22,
+    }));
+    const old = db.createAgentOperation("install", [{ machineId: machines[0]!.id!, machineName: "old" }], "2026-07-01T00:00:00.000Z");
+    db.finishAgentOperationItem(old.items[0]!.id, "succeeded", "installed", "", "2026-07-01T00:01:00.000Z");
+    db.finalizeAgentOperation(old.id, "2026-07-01T00:01:00.000Z");
+    const recent = db.createAgentOperation("install", [{ machineId: machines[1]!.id!, machineName: "recent" }], "2026-09-20T00:00:00.000Z");
+    db.finishAgentOperationItem(recent.items[0]!.id, "succeeded", "installed", "", "2026-09-20T00:01:00.000Z");
+    db.finalizeAgentOperation(recent.id, "2026-09-20T00:01:00.000Z");
+    const active = db.createAgentOperation("install", [{ machineId: machines[2]!.id!, machineName: "active" }], "2026-07-01T00:00:00.000Z");
+
+    expect(db.pruneAgentOperations(30, new Date("2026-09-21T00:00:00.000Z"))).toBe(1);
+    expect(db.getAgentOperation(old.id)).toBeUndefined();
+    expect(db.getAgentOperation(recent.id)).toBeDefined();
+    expect(db.getAgentOperation(active.id)).toBeDefined();
+    db.close();
+  });
+
   it("updates machine settings transactionally", () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-db-settings-"));
     const db = createDatabase(join(dir, "test.sqlite"));
