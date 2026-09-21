@@ -3,10 +3,57 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildApp } from "../src/server/app";
+import type { AppConfig } from "../src/server/config";
 import { createDatabase } from "../src/server/db";
 import type { ProbeResult } from "../src/shared/types";
 
+const adminHeaders = { authorization: "Bearer test-admin-key" };
+
 describe("api", () => {
+  it("reports admin status and protects every existing mutation", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-api-admin-"));
+    const csvPath = join(dir, "machines.csv");
+    writeFileSync(csvPath, "name,ip\nalpha,10.0.0.1\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    const machine = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22 });
+    const app = buildApp({
+      db,
+      config: makeConfig(dir, csvPath, { adminApiKey: "test-admin-key" }),
+      probeMachine: async (target): Promise<ProbeResult> => ({ name: target.name, ip: target.ip, sshOk: true, status: "ok" }),
+    });
+
+    expect((await app.inject({ method: "GET", url: "/api/summary" })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: "/api/admin/status" })).json()).toEqual({ enabled: true, authenticated: false });
+    expect((await app.inject({ method: "GET", url: "/api/admin/status", headers: adminHeaders })).json()).toEqual({ enabled: true, authenticated: true });
+    expect((await app.inject({ method: "POST", url: "/api/admin/verify" })).statusCode).toBe(401);
+    expect((await app.inject({ method: "POST", url: "/api/admin/verify", headers: adminHeaders })).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: "/api/poll-runs" })).statusCode).toBe(401);
+    expect((await app.inject({ method: "PUT", url: "/api/config", payload: { machinesPath: csvPath, pollIntervalSeconds: 300 } })).statusCode).toBe(401);
+    expect((await app.inject({ method: "PATCH", url: `/api/machines/${machine.id}`, payload: { maintenance: true } })).statusCode).toBe(401);
+    expect((await app.inject({ method: "POST", url: "/api/poll-runs", headers: adminHeaders })).statusCode).toBe(200);
+    expect((await app.inject({ method: "PATCH", url: `/api/machines/${machine.id}`, headers: adminHeaders, payload: { maintenance: true } })).statusCode).toBe(200);
+
+    await app.close();
+    db.close();
+  });
+
+  it("disables mutations when no admin key is configured", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-api-admin-disabled-"));
+    const csvPath = join(dir, "machines.csv");
+    writeFileSync(csvPath, "name,ip\nalpha,10.0.0.1\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    const app = buildApp({ db, config: makeConfig(dir, csvPath, { adminApiKey: "" }) });
+
+    expect((await app.inject({ method: "GET", url: "/api/admin/status" })).json()).toEqual({ enabled: false, authenticated: false });
+    expect((await app.inject({ method: "POST", url: "/api/admin/verify", headers: adminHeaders })).statusCode).toBe(503);
+    expect((await app.inject({ method: "POST", url: "/api/poll-runs", headers: adminHeaders })).statusCode).toBe(503);
+
+    await app.close();
+    db.close();
+  });
+
   it("reports low disk space without hiding poll freshness", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-api-storage-health-"));
     const csvPath = join(dir, "machines.csv");
@@ -32,7 +79,7 @@ describe("api", () => {
         pollOnStartup: false,
         retentionDays: 30,
         minFreeDiskBytes: 5 * 1024 ** 3,
-        adminApiKey: "",
+        adminApiKey: "test-admin-key",
         agentInstallJobs: 4,
         agentMaxBatch: 100,
         agentOperationRetentionDays: 30,
@@ -100,7 +147,7 @@ describe("api", () => {
         pollOnStartup: false,
         retentionDays: 30,
         minFreeDiskBytes: 5 * 1024 ** 3,
-        adminApiKey: "",
+        adminApiKey: "test-admin-key",
         agentInstallJobs: 4,
         agentMaxBatch: 100,
         agentOperationRetentionDays: 30,
@@ -130,6 +177,7 @@ describe("api", () => {
     const response = await app.inject({
       method: "PATCH",
       url: `/api/machines/${machine.id}`,
+      headers: adminHeaders,
       payload: { maintenance: true, expectedGpuCount: -3 },
     });
 
@@ -164,7 +212,7 @@ describe("api", () => {
         pollOnStartup: false,
         retentionDays: 30,
         minFreeDiskBytes: 5 * 1024 ** 3,
-        adminApiKey: "",
+        adminApiKey: "test-admin-key",
         agentInstallJobs: 4,
         agentMaxBatch: 100,
         agentOperationRetentionDays: 30,
@@ -188,7 +236,7 @@ describe("api", () => {
       },
     });
 
-    const response = await app.inject({ method: "POST", url: "/api/poll-runs" });
+    const response = await app.inject({ method: "POST", url: "/api/poll-runs", headers: adminHeaders });
 
     expect(response.statusCode).toBe(500);
     expect(response.json()).toMatchObject({
@@ -232,7 +280,7 @@ describe("api", () => {
         pollOnStartup: false,
         retentionDays: 30,
         minFreeDiskBytes: 5 * 1024 ** 3,
-        adminApiKey: "",
+        adminApiKey: "test-admin-key",
         agentInstallJobs: 4,
         agentMaxBatch: 100,
         agentOperationRetentionDays: 30,
@@ -256,7 +304,7 @@ describe("api", () => {
       },
     });
 
-    const response = await app.inject({ method: "POST", url: "/api/poll-runs" });
+    const response = await app.inject({ method: "POST", url: "/api/poll-runs", headers: adminHeaders });
 
     expect(response.statusCode).toBe(500);
     expect(response.json()).toMatchObject({ runId: expect.any(Number) });
@@ -293,7 +341,7 @@ describe("api", () => {
         pollOnStartup: false,
         retentionDays: 30,
         minFreeDiskBytes: 5 * 1024 ** 3,
-        adminApiKey: "",
+        adminApiKey: "test-admin-key",
         agentInstallJobs: 4,
         agentMaxBatch: 100,
         agentOperationRetentionDays: 30,
@@ -335,7 +383,7 @@ describe("api", () => {
       }),
     });
 
-    const poll = await app.inject({ method: "POST", url: "/api/poll-runs" });
+    const poll = await app.inject({ method: "POST", url: "/api/poll-runs", headers: adminHeaders });
     expect(poll.statusCode).toBe(200);
     expect(probeCalls).toBe(1);
 
@@ -355,6 +403,7 @@ describe("api", () => {
     const badSettings = await app.inject({
       method: "PUT",
       url: "/api/config",
+      headers: adminHeaders,
       payload: {
         machinesPath: join(dir, "missing.csv"),
         pollIntervalSeconds: 120,
@@ -369,6 +418,7 @@ describe("api", () => {
     const settings = await app.inject({
       method: "PUT",
       url: "/api/config",
+      headers: adminHeaders,
       payload: {
         machinesPath: secondCsvPath,
         pollIntervalSeconds: 120,
@@ -432,6 +482,7 @@ describe("api", () => {
     const maintenanceOn = await app.inject({
       method: "PATCH",
       url: `/api/machines/${machine.id}`,
+      headers: adminHeaders,
       payload: { maintenance: true },
     });
     expect(maintenanceOn.statusCode).toBe(200);
@@ -440,6 +491,7 @@ describe("api", () => {
     const badExpected = await app.inject({
       method: "PATCH",
       url: `/api/machines/${machine.id}`,
+      headers: adminHeaders,
       payload: { expectedGpuCount: -3 },
     });
     expect(badExpected.statusCode).toBe(400);
@@ -521,7 +573,7 @@ describe("api", () => {
         pollOnStartup: false,
         retentionDays: 30,
         minFreeDiskBytes: 5 * 1024 ** 3,
-        adminApiKey: "",
+        adminApiKey: "test-admin-key",
         agentInstallJobs: 4,
         agentMaxBatch: 100,
         agentOperationRetentionDays: 30,
@@ -551,7 +603,7 @@ describe("api", () => {
       },
     });
 
-    const firstPoll = app.inject({ method: "POST", url: "/api/poll-runs" });
+    const firstPoll = app.inject({ method: "POST", url: "/api/poll-runs", headers: adminHeaders });
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     const runningStatus = await app.inject({ method: "GET", url: "/api/poll-status" });
@@ -563,7 +615,7 @@ describe("api", () => {
     });
     expect(runningStatus.json().elapsedMs).toBeGreaterThanOrEqual(0);
 
-    const skippedPoll = await app.inject({ method: "POST", url: "/api/poll-runs" });
+    const skippedPoll = await app.inject({ method: "POST", url: "/api/poll-runs", headers: adminHeaders });
     expect(skippedPoll.json()).toMatchObject({ runId: 0, skipped: true });
 
     const skippedStatus = await app.inject({ method: "GET", url: "/api/poll-status" });
@@ -583,3 +635,42 @@ describe("api", () => {
     db.close();
   });
 });
+
+function makeConfig(dir: string, machinesPath: string, overrides: Partial<AppConfig> = {}): AppConfig {
+  return {
+    machinesPath,
+    dbPath: join(dir, "db.sqlite"),
+    envPath: join(dir, ".env"),
+    user: "ezc",
+    fallbackUser: "",
+    keyPath: "~/.ssh/test",
+    connectTimeoutSeconds: 10,
+    probeTimeoutSeconds: 60,
+    jobs: 1,
+    pollIntervalSeconds: 300,
+    skipLogs: true,
+    processArgsMaxChars: 512,
+    pollOnStartup: false,
+    retentionDays: 30,
+    minFreeDiskBytes: 5 * 1024 ** 3,
+    adminApiKey: "test-admin-key",
+    agentInstallJobs: 4,
+    agentMaxBatch: 100,
+    agentOperationRetentionDays: 30,
+    agentOutputMaxChars: 4000,
+    telegramBotToken: "",
+    telegramChatId: "",
+    slackBotToken: "",
+    slackChannelsPath: "",
+    slackDryRun: false,
+    agentDrainEnabled: false,
+    agentDrainTimeoutSeconds: 120,
+    agentDrainMaxLines: 600,
+    agentRetentionDays: 21,
+    notifyRecovery: false,
+    heartbeatUrl: "",
+    host: "127.0.0.1",
+    port: 0,
+    ...overrides,
+  };
+}

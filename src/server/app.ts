@@ -1,4 +1,4 @@
-import fastify from "fastify";
+import fastify, { type FastifyReply } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -9,6 +9,7 @@ import type { DashboardDatabase } from "./db";
 import { readInventoryFromFile } from "./inventory";
 import { PollFailedError, PollScheduler, type ProbeMachine } from "./scheduler";
 import { readStorageHealth } from "./storageHealth";
+import { verifyAdminAuthorization } from "./adminAuth";
 
 export type BuildAppOptions = {
   db: DashboardDatabase;
@@ -22,6 +23,16 @@ export function buildApp(options: BuildAppOptions) {
   const scheduler = new PollScheduler(options.db, options.config, options.probeMachine);
   const storageHealthProvider = options.storageHealthProvider
     ?? (() => readStorageHealth(options.config.dbPath, options.config.minFreeDiskBytes));
+  const requireAdmin = (authorization: string | undefined, reply: FastifyReply): boolean => {
+    const state = verifyAdminAuthorization(options.config.adminApiKey, authorization);
+    if (state === "authenticated") {
+      return true;
+    }
+    reply.code(state === "disabled" ? 503 : 401).send({
+      error: state === "disabled" ? "admin mode is disabled" : "admin authentication required",
+    });
+    return false;
+  };
   const runtimeConfig = (): RuntimeConfig => ({
     machinesPath: options.config.machinesPath,
     dbPath: options.config.dbPath,
@@ -68,7 +79,20 @@ export function buildApp(options: BuildAppOptions) {
     };
   });
   app.get("/api/config", async (): Promise<RuntimeConfig> => runtimeConfig());
+  app.get("/api/admin/status", async (request) => {
+    const state = verifyAdminAuthorization(options.config.adminApiKey, request.headers.authorization);
+    return { enabled: state !== "disabled", authenticated: state === "authenticated" };
+  });
+  app.post("/api/admin/verify", async (request, reply) => {
+    if (!requireAdmin(request.headers.authorization, reply)) {
+      return;
+    }
+    return { authenticated: true };
+  });
   app.put<{ Body: Partial<EditableRuntimeConfig> }>("/api/config", async (request, reply) => {
+    if (!requireAdmin(request.headers.authorization, reply)) {
+      return;
+    }
     const machinesPath = String(request.body?.machinesPath ?? "").trim();
     const pollIntervalSeconds = Number(request.body?.pollIntervalSeconds);
 
@@ -125,6 +149,9 @@ export function buildApp(options: BuildAppOptions) {
     options.db.listProcesses(Number(request.params.id), parseLimit(request.query.limit, 200)),
   );
   app.patch<{ Params: { id: string }; Body: { maintenance?: boolean; expectedGpuCount?: number | null } }>("/api/machines/:id", async (request, reply) => {
+    if (!requireAdmin(request.headers.authorization, reply)) {
+      return;
+    }
     const machineId = Number(request.params.id);
     if (!options.db.getMachine(machineId)) {
       return reply.code(404).send({ error: "machine not found" });
@@ -176,6 +203,9 @@ export function buildApp(options: BuildAppOptions) {
     options.db.listPollRuns(parseLimit(request.query.limit, 50)),
   );
   app.post("/api/poll-runs", async (_request, reply) => {
+    if (!requireAdmin(_request.headers.authorization, reply)) {
+      return;
+    }
     try {
       return await scheduler.pollOnce();
     } catch (error) {
