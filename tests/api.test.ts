@@ -10,6 +10,92 @@ import type { ProbeResult } from "../src/shared/types";
 const adminHeaders = { authorization: "Bearer test-admin-key" };
 
 describe("api", () => {
+  it("validates, protects, and exposes durable agent operations", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-api-agent-operation-"));
+    const csvPath = join(dir, "machines.csv");
+    writeFileSync(csvPath, "name,ip\nalpha,10.0.0.1\nbeta,10.0.0.2\ngamma,10.0.0.3\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    const alpha = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22 });
+    const beta = db.upsertMachine({ name: "beta", ip: "10.0.0.2", sshHost: "10.0.0.2", sshPort: 22 });
+    const gamma = db.upsertMachine({ name: "gamma", ip: "10.0.0.3", sshHost: "10.0.0.3", sshPort: 22 });
+    db.markMissingInactive(["alpha", "beta"]);
+    const started: number[] = [];
+    const runner = {
+      start(operationId: number) { started.push(operationId); },
+      recoverInterrupted() { return 0; },
+      isMachineBusy(machineId: number) {
+        return Boolean(db.raw.prepare("SELECT 1 FROM agent_operation_items WHERE machine_id = ? AND status IN ('queued', 'running')").get(machineId));
+      },
+    };
+    const app = buildApp({
+      db,
+      config: makeConfig(dir, csvPath, { adminApiKey: "test-admin-key", agentMaxBatch: 2 }),
+      agentOperationRunner: runner,
+    });
+
+    expect((await app.inject({ method: "GET", url: "/api/agent-operations" })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: "/api/agent-operations/1" })).statusCode).toBe(401);
+    expect((await app.inject({ method: "POST", url: "/api/agent-operations", payload: { action: "install", machineIds: [alpha.id] } })).statusCode).toBe(401);
+
+    const invalidBodies = [
+      { action: "install", machineIds: [] },
+      { action: "upgrade", machineIds: [alpha.id] },
+      { action: "install", machineIds: [alpha.id, alpha.id] },
+      { action: "install", machineIds: [alpha.id, beta.id, gamma.id] },
+      { action: "install", machineIds: [999] },
+      { action: "install", machineIds: [gamma.id] },
+      { action: "install", machineIds: [alpha.id], host: "attacker.invalid" },
+    ];
+    for (const body of invalidBodies) {
+      expect((await app.inject({ method: "POST", url: "/api/agent-operations", headers: adminHeaders, payload: body })).statusCode).toBe(400);
+    }
+    expect(db.listAgentOperations()).toEqual([]);
+
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/agent-operations",
+      headers: adminHeaders,
+      payload: { action: "install", machineIds: [alpha.id, beta.id] },
+    });
+    expect(created.statusCode).toBe(202);
+    expect(created.json()).toMatchObject({ action: "install", machineCount: 2 });
+    expect(created.json().items.map((item: { machineName: string }) => item.machineName)).toEqual(["alpha", "beta"]);
+    expect(started).toEqual([created.json().id]);
+
+    const overlap = await app.inject({
+      method: "POST",
+      url: "/api/agent-operations",
+      headers: adminHeaders,
+      payload: { action: "uninstall", machineIds: [alpha.id] },
+    });
+    expect(overlap.statusCode).toBe(409);
+    expect(overlap.json()).toEqual({ error: "agent operation already active", machineIds: [alpha.id] });
+
+    const first = db.getAgentOperation(created.json().id)!;
+    for (const item of first.items) db.finishAgentOperationItem(item.id, "succeeded", "done", "");
+    db.finalizeAgentOperation(first.id);
+    const uninstall = await app.inject({
+      method: "POST",
+      url: "/api/agent-operations",
+      headers: adminHeaders,
+      payload: { action: "uninstall", machineIds: [alpha.id] },
+    });
+    expect(uninstall.statusCode).toBe(202);
+    expect(uninstall.json()).toMatchObject({ action: "uninstall", machineCount: 1 });
+
+    const list = await app.inject({ method: "GET", url: "/api/agent-operations?limit=999", headers: adminHeaders });
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toHaveLength(2);
+    const detail = await app.inject({ method: "GET", url: `/api/agent-operations/${created.json().id}`, headers: adminHeaders });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json().items).toHaveLength(2);
+    expect((await app.inject({ method: "GET", url: "/api/agent-operations/99999", headers: adminHeaders })).statusCode).toBe(404);
+
+    await app.close();
+    db.close();
+  });
+
   it("reports admin status and protects every existing mutation", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-api-admin-"));
     const csvPath = join(dir, "machines.csv");

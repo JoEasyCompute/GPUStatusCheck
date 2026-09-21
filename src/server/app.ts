@@ -10,17 +10,24 @@ import { readInventoryFromFile } from "./inventory";
 import { PollFailedError, PollScheduler, type ProbeMachine } from "./scheduler";
 import { readStorageHealth } from "./storageHealth";
 import { verifyAdminAuthorization } from "./adminAuth";
+import { AgentOperationRunner } from "./agentOperations";
+
+type AgentOperationController = Pick<AgentOperationRunner, "start" | "recoverInterrupted" | "isMachineBusy">;
 
 export type BuildAppOptions = {
   db: DashboardDatabase;
   config: AppConfig;
   probeMachine?: ProbeMachine;
   storageHealthProvider?: () => Promise<StorageHealth>;
+  agentOperationRunner?: AgentOperationController;
 };
 
 export function buildApp(options: BuildAppOptions) {
   const app = fastify({ logger: false });
   const scheduler = new PollScheduler(options.db, options.config, options.probeMachine);
+  const agentOperationRunner = options.agentOperationRunner ?? new AgentOperationRunner(options.db, options.config);
+  agentOperationRunner.recoverInterrupted();
+  options.db.pruneAgentOperations(options.config.agentOperationRetentionDays);
   const storageHealthProvider = options.storageHealthProvider
     ?? (() => readStorageHealth(options.config.dbPath, options.config.minFreeDiskBytes));
   const requireAdmin = (authorization: string | undefined, reply: FastifyReply): boolean => {
@@ -202,6 +209,58 @@ export function buildApp(options: BuildAppOptions) {
   app.get<{ Querystring: { limit?: string } }>("/api/poll-runs", async (request) =>
     options.db.listPollRuns(parseLimit(request.query.limit, 50)),
   );
+  app.get<{ Querystring: { limit?: string } }>("/api/agent-operations", async (request, reply) => {
+    if (!requireAdmin(request.headers.authorization, reply)) return;
+    return options.db.listAgentOperations(parseLimit(request.query.limit, 20, 100));
+  });
+  app.get<{ Params: { id: string } }>("/api/agent-operations/:id", async (request, reply) => {
+    if (!requireAdmin(request.headers.authorization, reply)) return;
+    const operation = options.db.getAgentOperation(Number(request.params.id));
+    if (!operation) return reply.code(404).send({ error: "agent operation not found" });
+    return operation;
+  });
+  app.post<{ Body: Record<string, unknown> }>("/api/agent-operations", async (request, reply) => {
+    if (!requireAdmin(request.headers.authorization, reply)) return;
+    const body = request.body ?? {};
+    const keys = Object.keys(body).sort();
+    if (keys.length !== 2 || keys[0] !== "action" || keys[1] !== "machineIds") {
+      return reply.code(400).send({ error: "body must contain only action and machineIds" });
+    }
+    const action = body.action;
+    const machineIds = body.machineIds;
+    if ((action !== "install" && action !== "uninstall") || !Array.isArray(machineIds)) {
+      return reply.code(400).send({ error: "action and machineIds are invalid" });
+    }
+    if (machineIds.length === 0 || machineIds.length > options.config.agentMaxBatch
+      || machineIds.some((id) => !Number.isInteger(id) || Number(id) < 1)
+      || new Set(machineIds).size !== machineIds.length) {
+      return reply.code(400).send({ error: "machineIds must be unique active machine ids within the batch limit" });
+    }
+    const ids = machineIds.map(Number);
+    const activeById = new Map(options.db.listMachines().map((machine) => [machine.id!, machine]));
+    const invalid = ids.filter((id) => !activeById.has(id));
+    if (invalid.length > 0) {
+      return reply.code(400).send({ error: "machines must be active inventory entries", machineIds: invalid });
+    }
+    const busy = ids.filter((id) => agentOperationRunner.isMachineBusy(id));
+    if (busy.length > 0) {
+      return reply.code(409).send({ error: "agent operation already active", machineIds: busy });
+    }
+    try {
+      const operation = options.db.createAgentOperation(action, ids.map((id) => ({
+        machineId: id,
+        machineName: activeById.get(id)!.name,
+      })));
+      agentOperationRunner.start(operation.id);
+      return reply.code(202).send(operation);
+    } catch (error) {
+      const conflicted = ids.filter((id) => agentOperationRunner.isMachineBusy(id));
+      if (conflicted.length > 0) {
+        return reply.code(409).send({ error: "agent operation already active", machineIds: conflicted });
+      }
+      throw error;
+    }
+  });
   app.post("/api/poll-runs", async (_request, reply) => {
     if (!requireAdmin(_request.headers.authorization, reply)) {
       return;

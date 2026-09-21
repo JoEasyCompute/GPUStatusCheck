@@ -203,6 +203,7 @@ export class PollScheduler {
       }
       try {
         const pruned = this.db.pruneHistory(this.config.retentionDays, this.config.agentRetentionDays);
+        this.db.pruneAgentOperations(this.config.agentOperationRetentionDays);
         if (pruned > 0) {
           console.log(`pruned ${pruned} history rows older than ${this.config.retentionDays} days`);
         }
