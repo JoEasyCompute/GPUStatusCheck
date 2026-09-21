@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import { buildSshCommand } from "../shared/ssh";
-import type { EditableRuntimeConfig, GpuIdentity, GpuProcess, MachineWithLatest, PollStatus, ProbeResult, RuntimeConfig, Summary } from "../shared/types";
-import { fetchJson, fetchJsonArray } from "./api";
+import type { AdminStatus, EditableRuntimeConfig, GpuIdentity, GpuProcess, MachineWithLatest, PollStatus, ProbeResult, RuntimeConfig, Summary } from "../shared/types";
+import { AdminAccess } from "./AdminAccess";
+import { adminSessionReducer, clearAdminKey, initialAdminSessionState, loadAdminKey, saveAdminKey } from "./adminSession";
+import { ApiError, fetchAdminJson, fetchJson, fetchJsonArray } from "./api";
 import { copyText } from "./clipboard";
 import { FleetCharts } from "./FleetCharts";
 import { GpuDetailModal } from "./GpuDetailModal";
@@ -47,6 +49,14 @@ type SettingsForm = {
 };
 
 export function App() {
+  const [admin, dispatchAdmin] = useReducer(adminSessionReducer, initialAdminSessionState, (initial) => {
+    try {
+      const key = loadAdminKey(window.sessionStorage);
+      return key ? adminSessionReducer(initial, { type: "restore", key }) : initial;
+    } catch {
+      return initial;
+    }
+  });
   const [summary, setSummary] = useState<Summary>(emptySummary);
   const [machines, setMachines] = useState<MachineWithLatest[]>([]);
   const [selectedMachineId, setSelectedMachineId] = useState<number | undefined>();
@@ -71,6 +81,44 @@ export function App() {
   const [settingsMessage, setSettingsMessage] = useState("");
   const [copyMessage, setCopyMessage] = useState("");
 
+  function clearStoredAdminKey() {
+    try {
+      clearAdminKey(window.sessionStorage);
+    } catch {
+      // Storage unavailable; reducer state still locks this tab.
+    }
+  }
+
+  function handleAdminError(err: unknown) {
+    if (err instanceof ApiError && err.status === 401) {
+      clearStoredAdminKey();
+      dispatchAdmin({ type: "unauthorized", message: "Admin key rejected or rotated" });
+    }
+    setError(err instanceof Error ? err.message : String(err));
+  }
+
+  async function unlockAdmin(key: string) {
+    dispatchAdmin({ type: "verifying", key });
+    try {
+      await fetchAdminJson<{ authenticated: true }>(key, "/api/admin/verify", { method: "POST" });
+      try {
+        saveAdminKey(window.sessionStorage, key);
+      } catch {
+        // Private mode may reject storage; current in-memory session still works.
+      }
+      dispatchAdmin({ type: "verified" });
+      setError("");
+    } catch (err) {
+      clearStoredAdminKey();
+      dispatchAdmin({ type: "verificationFailed", message: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  function lockAdmin() {
+    clearStoredAdminKey();
+    dispatchAdmin({ type: "lock" });
+  }
+
   async function refresh() {
     try {
       const [nextSummary, nextMachines, nextConfig, nextPollStatus, nextGpus] = await Promise.all([
@@ -92,10 +140,11 @@ export function App() {
   }
 
   async function triggerPoll() {
+    if (admin.mode !== "unlocked") return;
     setPolling(true);
     setPollMessage("");
     try {
-      const body = await fetchJson<{ runId: number; skipped: boolean }>("/api/poll-runs", { method: "POST" });
+      const body = await fetchAdminJson<{ runId: number; skipped: boolean }>(admin.key, "/api/poll-runs", { method: "POST" });
       if (body.skipped) {
         setPollMessage("Poll already running");
       } else {
@@ -103,13 +152,14 @@ export function App() {
       }
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      handleAdminError(err);
     } finally {
       setPolling(false);
     }
   }
 
   async function saveSettings() {
+    if (admin.mode !== "unlocked") return;
     const pollIntervalSeconds = Number(settings.pollIntervalSeconds);
     const payload: EditableRuntimeConfig = {
       machinesPath: settings.machinesPath.trim(),
@@ -118,7 +168,7 @@ export function App() {
 
     setSavingSettings(true);
     try {
-      const nextConfig = await fetchJson<RuntimeConfig>("/api/config", {
+      const nextConfig = await fetchAdminJson<RuntimeConfig>(admin.key, "/api/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -134,22 +184,23 @@ export function App() {
       await refresh();
     } catch (err) {
       setSettingsMessage("");
-      setError(err instanceof Error ? err.message : String(err));
+      handleAdminError(err);
     } finally {
       setSavingSettings(false);
     }
   }
 
   async function toggleMaintenance(machine: MachineWithLatest) {
+    if (admin.mode !== "unlocked") return;
     try {
-      await fetchJson<MachineWithLatest>(`/api/machines/${machine.id}`, {
+      await fetchAdminJson<MachineWithLatest>(admin.key, `/api/machines/${machine.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ maintenance: !machine.maintenance }),
       });
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      handleAdminError(err);
     }
   }
 
@@ -170,6 +221,20 @@ export function App() {
     void refresh();
     const timer = setInterval(() => void refresh(), 5000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchJson<AdminStatus>("/api/admin/status").then(async (status) => {
+      if (cancelled) return;
+      dispatchAdmin({ type: "status", enabled: status.enabled });
+      if (status.enabled && admin.key) {
+        await unlockAdmin(admin.key);
+      }
+    }).catch((err) => {
+      if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+    });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -276,7 +341,10 @@ export function App() {
             <span>Database <strong>{config?.dbPath ?? "-"}</strong></span>
           </p>
         </div>
-        <button className="primary" onClick={triggerPoll} disabled={polling}>{polling ? "Polling..." : "Poll now"}</button>
+        <div className="topbar-actions">
+          <AdminAccess state={admin} protocol={window.location.protocol} onUnlock={unlockAdmin} onLock={lockAdmin} />
+          <button className="primary" onClick={triggerPoll} disabled={polling || admin.mode !== "unlocked"}>{polling ? "Polling..." : "Poll now"}</button>
+        </div>
       </header>
 
       {error ? <div className="error">{error}</div> : null}
@@ -332,6 +400,7 @@ export function App() {
               <span>CSV file</span>
               <input
                 value={settings.machinesPath}
+                disabled={admin.mode !== "unlocked"}
                 onChange={(event) => {
                   setSettings((current) => ({ ...current, machinesPath: event.target.value }));
                   setSettingsDirty(true);
@@ -346,6 +415,7 @@ export function App() {
                 min="1"
                 step="1"
                 value={settings.pollIntervalSeconds}
+                disabled={admin.mode !== "unlocked"}
                 onChange={(event) => {
                   setSettings((current) => ({ ...current, pollIntervalSeconds: event.target.value }));
                   setSettingsDirty(true);
@@ -354,7 +424,7 @@ export function App() {
               />
             </label>
             <div className="settings-actions">
-              <button onClick={saveSettings} disabled={savingSettings || !settingsDirty}>
+              <button onClick={saveSettings} disabled={savingSettings || !settingsDirty || admin.mode !== "unlocked"}>
                 {savingSettings ? "Saving..." : "Save"}
               </button>
               {settingsMessage ? <span>{settingsMessage}</span> : null}
@@ -454,6 +524,7 @@ export function App() {
           history={history}
           processes={processes}
           onToggleMaintenance={toggleMaintenance}
+          adminUnlocked={admin.mode === "unlocked"}
           onCopySsh={copySshCommand}
           onSelectGpu={(uuid) => {
             setSelectedMachineId(undefined);

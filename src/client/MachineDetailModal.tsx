@@ -13,6 +13,7 @@ export function MachineDetailModal({
   onToggleMaintenance,
   onCopySsh,
   onSelectGpu,
+  adminUnlocked,
 }: {
   machine: MachineWithLatest;
   history: ProbeResult[];
@@ -21,6 +22,7 @@ export function MachineDetailModal({
   onToggleMaintenance: (machine: MachineWithLatest) => void;
   onCopySsh: (machine: MachineWithLatest) => Promise<void> | void;
   onSelectGpu?: (uuid: string) => void;
+  adminUnlocked: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const latest = history[0] ?? machine.latest;
@@ -41,9 +43,11 @@ export function MachineDetailModal({
             {machine.ip}
           </button>
           {copied ? <span className="chip copied">copied</span> : null}
-          <button className="maintenance-toggle" onClick={() => onToggleMaintenance(machine)}>
-            {machine.maintenance ? "Exit maintenance" : "Enter maintenance"}
-          </button>
+          {adminUnlocked ? (
+            <button className="maintenance-toggle" onClick={() => onToggleMaintenance(machine)}>
+              {machine.maintenance ? "Exit maintenance" : "Enter maintenance"}
+            </button>
+          ) : null}
           <button className="modal-close" onClick={onClose} aria-label="Close">
             ✕
           </button>
