@@ -27,9 +27,31 @@ just need `npm run build` (static files are served from disk per request).
 Node 22.12 or newer is required. Record the pre-deploy commit for rollback and
 verify `http://127.0.0.1:4100/api/health` after every restart.
 
-The current public deployment intentionally leaves read and mutating endpoints
-unauthenticated. Do not mistake reachability for authorization: any reachable
-client can trigger polls, toggle maintenance, and update exposed settings.
+The dashboard intentionally keeps monitoring reads public. Mutations are
+disabled without `GPUCHECK_ADMIN_API_KEY` and require its bearer value when
+administration mode is enabled.
+
+## Admin and Web agent operations
+
+`GPUCHECK_ADMIN_API_KEY` gates every mutation: manual polls, config writes,
+machine PATCH, and agent-operation create/list/detail. Public monitoring stays
+read-only. The React client keeps the key in `sessionStorage` only and locks on
+401. Never log, persist, interpolate into URLs, or commit the key.
+
+The deployed site is plain HTTP until nginx HTTPS is added, so the bearer key is
+interceptable. Preserve the UI/documentation warning and rotate the key after
+HTTPS is enabled.
+
+Web agent work accepts only active database machine IDs and fixed install or
+uninstall actions. The server resolves SSH host/user/key configuration and owns
+all scripts, units, commands, paths, timeouts, and payloads. Operations are
+transactional, per-machine overlap is blocked by a partial unique index, the
+runner has independent bounded concurrency, and unfinished work becomes
+interrupted after restart. Agent presence remains live-probe-derived.
+
+Real production agent changes require a separately approved rollout: validate,
+configure the key, restart, verify auth boundaries, pilot install/uninstall on
+one non-critical host, confirm with a live poll, then attempt a small bulk run.
 
 ## Database safety
 

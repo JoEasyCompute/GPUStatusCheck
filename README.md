@@ -256,10 +256,68 @@ is no authentication, and the dashboard can trigger SSH-backed polls and edit
 `.env`, so only do this on a trusted network (or keep it behind a VPN such as
 Tailscale or a reverse proxy with auth).
 
-The current deployment intentionally keeps both reads and mutations
-unauthenticated. This means any client that can reach the dashboard can trigger
-SSH-backed polls, toggle maintenance, and edit the two exposed runtime settings.
-That is an accepted operational constraint, not an authentication boundary.
+The dashboard keeps monitoring reads public. Mutations are disabled when no
+admin key is configured and require the bearer key when administration mode is
+enabled.
+
+### Admin access and Web agent management
+
+Set `GPUCHECK_ADMIN_API_KEY` to enable mutations and the agent-management UI.
+Generate at least 32 random bytes outside the repository, then place the value
+in the production `.env` without committing it:
+
+```bash
+openssl rand -base64 32
+```
+
+Public summary, machine, GPU, history, poll-status, configuration-display, and
+health endpoints remain readable while locked. The following actions require
+`Authorization: Bearer <key>` and are exposed only after unlocking the current
+browser tab:
+
+- Poll now
+- CSV path and polling-interval changes
+- maintenance and expected-GPU-count changes
+- agent install/upgrade, uninstall, progress, and operation history
+
+The browser stores the key in `sessionStorage`, so reloading the same tab keeps
+it unlocked and closing the tab removes it. Lock clears it immediately. The key
+is never written to SQLite or persistent `localStorage`.
+
+**The current HTTP deployment does not protect this key in transit.** Anyone
+able to observe the network can capture it. Keep the warning visible and rotate
+the key after nginx HTTPS termination is enabled.
+
+Agent operations target explicitly selected active inventory machines only.
+Install is idempotent and upgrades older agents to the bundled version;
+uninstall requires a separate confirmation and removes the timer, scripts, and
+buffered spool. Jobs run asynchronously with bounded concurrency. Hosts without
+passwordless `sudo` are skipped, other machine failures do not stop the batch,
+and progress/history survive tab closure. A server restart marks ambiguous
+queued/running items interrupted instead of retrying them automatically.
+
+Settings:
+
+```bash
+GPUCHECK_ADMIN_API_KEY=
+GPUCHECK_AGENT_INSTALL_JOBS=4
+GPUCHECK_AGENT_MAX_BATCH=100
+GPUCHECK_AGENT_OPERATION_RETENTION_DAYS=30
+GPUCHECK_AGENT_OUTPUT_MAX_CHARS=4000
+```
+
+Stored diagnostic output is sanitized, secret-redacted, and truncated. A
+successful install does not override monitoring state; the next live poll must
+report `agentVersion` before the UI treats the agent as present. Failed,
+skipped, and interrupted items can be explicitly selected into a new operation.
+
+Production rollout must be separately approved: add the key, run
+`npm run check`, restart, verify public reads while locked, verify 401 without a
+key and success with it, then pilot install and uninstall on one non-critical
+machine. Confirm presence/absence with a live poll before a small bulk pilot.
+Rollback to the prior commit with its lockfile and restart; the additive
+operation-history tables may remain. Rotate the key after rollback or HTTPS
+enablement.
 
 History older than `GPUCHECK_RETENTION_DAYS` (default 30) is pruned from the
 SQLite database after each poll so it does not grow without bound. Each
