@@ -85,6 +85,30 @@ describe("agent operation runner", () => {
     });
     db.close();
   });
+
+  it("terminalizes and unlocks an item when marking it running throws", async () => {
+    const { db, config, targets } = setup(1);
+    const operation = db.createAgentOperation("install", targets);
+    let failTransition = true;
+    const failingDb = {
+      ...db,
+      markAgentOperationItemRunning(id: number, at?: string) {
+        if (failTransition) {
+          failTransition = false;
+          throw new Error("database transition failed");
+        }
+        return db.markAgentOperationItemRunning(id, at);
+      },
+    };
+    const runner = new AgentOperationRunner(failingDb, config, async () => ({ outcome: "succeeded", summary: "installed", output: "" }));
+
+    runner.start(operation.id);
+    await expect.poll(() => db.getAgentOperation(operation.id)?.status).toBe("failed");
+    expect(db.getAgentOperation(operation.id)?.items[0]).toMatchObject({ status: "failed", summary: "installer error" });
+    expect(runner.isMachineBusy(targets[0]!.machineId)).toBe(false);
+    expect(() => db.createAgentOperation("uninstall", targets)).not.toThrow();
+    db.close();
+  });
 });
 
 function setup(count: number, overrides: Partial<AppConfig> = {}) {

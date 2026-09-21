@@ -57,11 +57,11 @@ export class AgentOperationRunner {
   }
 
   private async runItem(action: AgentAction, itemId: number, machineId: number): Promise<void> {
-    this.db.markAgentOperationItemRunning(itemId);
     let status: "succeeded" | "skipped" | "failed" = "failed";
     let summary = "installer error";
     let output = "";
     try {
+      this.db.markAgentOperationItemRunning(itemId);
       const machine = this.db.getMachine(machineId);
       if (!machine || machine.active === false) {
         summary = "machine is no longer active";

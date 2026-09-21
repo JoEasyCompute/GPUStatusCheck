@@ -238,7 +238,19 @@ export function buildApp(options: BuildAppOptions) {
     }
     const ids = machineIds.map(Number);
     const activeById = new Map(options.db.listMachines().map((machine) => [machine.id!, machine]));
-    const invalid = ids.filter((id) => !activeById.has(id));
+    let currentInventory;
+    try {
+      currentInventory = readInventoryFromFile(options.config.machinesPath);
+    } catch (error) {
+      return reply.code(400).send({ error: `cannot read current inventory: ${error instanceof Error ? error.message : String(error)}` });
+    }
+    const inventoryByName = new Map(currentInventory.map((machine) => [machine.name, machine]));
+    const invalid = ids.filter((id) => {
+      const stored = activeById.get(id);
+      if (!stored) return true;
+      const current = inventoryByName.get(stored.name);
+      return !current || current.ip !== stored.ip;
+    });
     if (invalid.length > 0) {
       return reply.code(400).send({ error: "machines must be active inventory entries", machineIds: invalid });
     }

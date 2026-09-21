@@ -1123,9 +1123,13 @@ export function createDatabase(dbPath: string) {
         SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
         SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped,
         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
-        SUM(CASE WHEN status = 'interrupted' THEN 1 ELSE 0 END) AS interrupted
+        SUM(CASE WHEN status = 'interrupted' THEN 1 ELSE 0 END) AS interrupted,
+        SUM(CASE WHEN status IN ('queued', 'running') THEN 1 ELSE 0 END) AS nonterminal
       FROM agent_operation_items WHERE operation_id = ?
-    `).get(id) as { succeeded: number; skipped: number; failed: number; interrupted: number };
+    `).get(id) as { succeeded: number; skipped: number; failed: number; interrupted: number; nonterminal: number };
+    if (counts.nonterminal > 0) {
+      throw new Error(`agent operation ${id} has nonterminal items`);
+    }
     const status = counts.failed > 0 ? "failed" : counts.interrupted > 0 ? "interrupted" : "complete";
     db.prepare(`
       UPDATE agent_operations SET

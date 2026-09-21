@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { buildRemoteScript, isAuthFailure, normalizeGpuType, parseGpuProcesses, parseProbeOutput } from "../src/server/probe";
+import { buildRemoteScript, isAuthFailure, normalizeGpuType, parseGpuProcesses, parseProbeOutput, spawnWithInput } from "../src/server/probe";
 
 describe("probe parsing", () => {
   it("parses probe scalars and blocks", () => {
@@ -139,6 +139,20 @@ describe("probe parsing", () => {
     expect(script).not.toContain("\\${");
     expect(syntaxCheck.status).toBe(0);
     expect(syntaxCheck.stderr).toBe("");
+  });
+
+  it("bounds captured child output while continuing to drain the process", async () => {
+    const completed = await spawnWithInput(
+      process.execPath,
+      ["-e", "process.stdout.write('x'.repeat(10000)); process.stderr.write('y'.repeat(10000));"],
+      "",
+      5_000,
+      128,
+    );
+
+    expect(completed.code).toBe(0);
+    expect(completed.stdout).toBe("x".repeat(128));
+    expect(completed.stderr).toBe("y".repeat(128));
   });
 });
 

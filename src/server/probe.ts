@@ -385,7 +385,13 @@ function cleanToken(value: string | undefined): string {
   return value === undefined || value === "-" ? "" : value;
 }
 
-export function spawnWithInput(command: string, args: string[], input: string, timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
+export function spawnWithInput(
+  command: string,
+  args: string[],
+  input: string,
+  timeoutMs: number,
+  maxOutputChars = Number.POSITIVE_INFINITY,
+): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
@@ -398,10 +404,10 @@ export function spawnWithInput(command: string, args: string[], input: string, t
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
-      stdout += chunk;
+      if (stdout.length < maxOutputChars) stdout = `${stdout}${chunk}`.slice(0, maxOutputChars);
     });
     child.stderr.on("data", (chunk) => {
-      stderr += chunk;
+      if (stderr.length < maxOutputChars) stderr = `${stderr}${chunk}`.slice(0, maxOutputChars);
     });
     child.on("error", (error) => {
       clearTimeout(timer);

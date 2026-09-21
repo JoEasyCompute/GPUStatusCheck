@@ -63,6 +63,18 @@ describe("database", () => {
     db.close();
   });
 
+  it("refuses to finalize an agent operation with nonterminal items", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-agent-operation-nonterminal-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+    const machine = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22 });
+    const operation = db.createAgentOperation("install", [{ machineId: machine.id!, machineName: "alpha" }]);
+
+    expect(() => db.finalizeAgentOperation(operation.id)).toThrow("nonterminal items");
+    expect(db.getAgentOperation(operation.id)?.status).toBe("queued");
+    db.close();
+  });
+
   it("interrupts unfinished agent operations and releases their machine locks", () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-db-agent-operation-interrupt-"));
     const db = createDatabase(join(dir, "test.sqlite"));

@@ -96,6 +96,56 @@ describe("api", () => {
     db.close();
   });
 
+  it("rejects an agent operation removed from a newly configured inventory while a poll is running", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-api-agent-stale-inventory-"));
+    const firstCsv = join(dir, "first.csv");
+    const secondCsv = join(dir, "second.csv");
+    writeFileSync(firstCsv, "name,ip\nalpha,10.0.0.1\n");
+    writeFileSync(secondCsv, "name,ip\nbeta,10.0.0.2\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    const probeStarted = deferred<void>();
+    const releaseProbe = deferred<void>();
+    const runner = { start() {}, recoverInterrupted() { return 0; }, isMachineBusy() { return false; } };
+    const app = buildApp({
+      db,
+      config: makeConfig(dir, firstCsv, { adminApiKey: "test-admin-key" }),
+      agentOperationRunner: runner,
+      probeMachine: async (machine): Promise<ProbeResult> => {
+        probeStarted.resolve();
+        await releaseProbe.promise;
+        return { name: machine.name, ip: machine.ip, sshOk: true, status: "ok" };
+      },
+    });
+
+    const activePoll = app.inject({ method: "POST", url: "/api/poll-runs", headers: adminHeaders });
+    await probeStarted.promise;
+    const alpha = db.listMachines().find((machine) => machine.name === "alpha")!;
+    expect((await app.inject({
+      method: "PUT",
+      url: "/api/config",
+      headers: adminHeaders,
+      payload: { machinesPath: secondCsv, pollIntervalSeconds: 300 },
+    })).statusCode).toBe(200);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/agent-operations",
+      headers: adminHeaders,
+      payload: { action: "install", machineIds: [alpha.id] },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(db.listAgentOperations()).toEqual([]);
+    releaseProbe.resolve();
+    await activePoll;
+    await vi.waitFor(async () => {
+      expect((await app.inject({ method: "GET", url: "/api/poll-status" })).json().running).toBe(false);
+    });
+    await app.close();
+    db.close();
+  });
+
   it("reports admin status and protects every existing mutation", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-api-admin-"));
     const csvPath = join(dir, "machines.csv");
@@ -759,4 +809,12 @@ function makeConfig(dir: string, machinesPath: string, overrides: Partial<AppCon
     port: 0,
     ...overrides,
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
 }

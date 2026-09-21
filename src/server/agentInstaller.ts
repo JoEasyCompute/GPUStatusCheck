@@ -18,6 +18,8 @@ export type RunInstallerCommand = (
   timeoutMs: number,
 ) => Promise<{ code: number; stdout: string; stderr: string }>;
 export type InstallAgentCliOptions = { csvPath?: string; only?: string; action: AgentAction; force: boolean; help: boolean };
+const defaultRunInstallerCommand: RunInstallerCommand = (command, args, input, timeoutMs) =>
+  spawnWithInput(command, args, input, timeoutMs, 64 * 1024);
 
 export function parseInstallAgentArgs(argv: string[]): InstallAgentCliOptions {
   const options: InstallAgentCliOptions = { action: "install", force: false, help: false };
@@ -46,7 +48,7 @@ export async function runAgentAction(
   target: AgentInstallTarget,
   action: AgentAction,
   config: InstallerConfig,
-  runCommand: RunInstallerCommand = spawnWithInput,
+  runCommand: RunInstallerCommand = defaultRunInstallerCommand,
 ): Promise<AgentInstallResult> {
   try {
     if (action === "uninstall") {
