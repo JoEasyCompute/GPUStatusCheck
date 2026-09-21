@@ -222,6 +222,8 @@ export type AdminStatus = {
   authenticated: boolean;
 };
 
+export type AgentAction = "install" | "uninstall";
+
 export type StorageHealth = {
   databaseBytes: number | null;
   freeDiskBytes: number | null;
