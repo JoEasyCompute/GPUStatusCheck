@@ -31,6 +31,7 @@ export type AppConfig = {
   agentDrainTimeoutSeconds: number;
   agentDrainMaxLines: number;
   agentRetentionDays: number;
+  sshFailureReminderHours: number;
   notifyRecovery: boolean;
   heartbeatUrl: string;
   host: string;
@@ -72,6 +73,7 @@ export function loadConfig(env = process.env): AppConfig {
     agentDrainTimeoutSeconds: numberEnv(value("GPUCHECK_AGENT_DRAIN_TIMEOUT"), 120),
     agentDrainMaxLines: numberEnv(value("GPUCHECK_AGENT_DRAIN_MAX_LINES"), 600),
     agentRetentionDays: numberEnv(value("GPUCHECK_AGENT_RETENTION_DAYS"), 21),
+    sshFailureReminderHours: Math.max(0, numberEnv(value("GPUCHECK_SSH_FAILURE_REMINDER_HOURS"), 6)),
     notifyRecovery: boolEnv(value("GPUCHECK_NOTIFY_RECOVERY"), false),
     heartbeatUrl: value("GPUCHECK_HEARTBEAT_URL") || "",
     host: value("GPUCHECK_HOST") || "127.0.0.1",

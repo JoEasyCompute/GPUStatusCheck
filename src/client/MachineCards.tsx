@@ -123,6 +123,7 @@ function MachineCard({
 }) {
   const latest = machine.latest;
   const status = latest?.status ?? "unknown";
+  const snapshot = latest?.sshOk === false ? machine.lastSuccessful ?? latest : latest;
   return (
     <div
       className={`machine-card ${status} ${selected ? "selected" : ""}`}
@@ -148,19 +149,27 @@ function MachineCard({
         ) : null}
         <strong className="card-name" title={machine.name}>{machine.name}</strong>
         {machine.maintenance ? <span className="chip maintenance" title="Alerts muted while in maintenance">M</span> : null}
+        {snapshot?.agentVersion ? (
+          <span className="chip agent" title={`On-host agent v${snapshot.agentVersion}; last sample ingested ${formatTime(machine.agentState?.lastIngestedAt)}`}>A</span>
+        ) : null}
         <span className={`status ${status}`}>{formatStatus(status)}</span>
       </div>
       <div className="card-gpu">
-        {latest?.gpuCount !== null && latest?.gpuCount !== undefined ? `${latest.gpuCount} × ${latest.gpuType || "GPU"}` : "-"}
+        {snapshot?.gpuCount !== null && snapshot?.gpuCount !== undefined ? `${snapshot.gpuCount} × ${snapshot.gpuType || "GPU"}` : "-"}
       </div>
-      <GpuJobPills latest={latest} />
+      <GpuJobPills latest={snapshot} />
       <dl className="card-meta">
         <div><dt>Owner</dt><dd>{machine.owner || "-"}</dd></div>
         <div><dt>Location</dt><dd>{machine.location || "-"}</dd></div>
-        <div><dt>Power</dt><dd>{latest?.gpuPowerW ? `${latest.gpuPowerW} W` : "-"}</dd></div>
-        <div><dt>Temp</dt><dd>{latest?.gpuAvgTempC ? `${latest.gpuAvgTempC} °C` : "-"}</dd></div>
+        <div><dt>Power</dt><dd>{snapshot?.gpuPowerW ? `${snapshot.gpuPowerW} W` : "-"}</dd></div>
+        <div><dt>Temp</dt><dd>{snapshot?.gpuAvgTempC ? `${snapshot.gpuAvgTempC} °C` : "-"}</dd></div>
         <div className="card-checked"><dt>Checked</dt><dd>{formatTime(latest?.checkedAt)}</dd></div>
+        <div><dt>Last contact</dt><dd>{formatTime(machine.lastSuccessful?.checkedAt)}</dd></div>
+        {latest?.sshOk === false && machine.lastSuccessful ? (
+          <div><dt>Last status</dt><dd>{formatStatus(machine.lastSuccessful.status)}</dd></div>
+        ) : null}
       </dl>
+      {latest?.sshOk === false && machine.lastSuccessful ? <span className="chip">Showing last successful snapshot</span> : null}
     </div>
   );
 }

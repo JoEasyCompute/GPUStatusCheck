@@ -220,6 +220,7 @@ describe("late-data safety in shared tables", () => {
     const latest = db.listMachines()[0]?.latest;
     expect(latest?.source).toBe("probe");
     expect(latest?.status).toBe("degraded");
+    expect(db.listMachines()[0]?.lastSuccessful?.source).toBe("probe");
   });
 
   it("prunes agent rows on their own retention while probe keep-latest survives backfill", () => {
@@ -263,6 +264,7 @@ describe("scheduler drain wiring", () => {
       telegramBotToken: "", telegramChatId: "",
       slackBotToken: "", slackChannelsPath: "", slackDryRun: false,
       agentDrainEnabled: options.drainEnabled ?? true, agentDrainTimeoutSeconds: 120, agentDrainMaxLines: 600, agentRetentionDays: 21,
+      sshFailureReminderHours: 6,
       notifyRecovery: false, heartbeatUrl: "", host: "127.0.0.1", port: 0,
     };
     const drains: string[] = [];

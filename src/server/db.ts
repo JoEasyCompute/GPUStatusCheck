@@ -7,6 +7,7 @@ import type {
   AgentOperationDetail,
   AgentOperationItem,
   AgentOperationItemStatus,
+  AgentState,
   FleetHistoryPoint,
   GpuDailyStat,
   GpuDownNote,
@@ -19,6 +20,7 @@ import type {
   MachineWithLatest,
   PollRun,
   ProbeResult,
+  SshFailureReminderState,
   Summary,
 } from "../shared/types";
 import type { DropIncident, RosterEntry } from "./gpuDrops";
@@ -273,6 +275,12 @@ export function createDatabase(dbPath: string) {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS ssh_failure_reminder_states (
+        machine_name TEXT PRIMARY KEY,
+        failed_since_at TEXT NOT NULL,
+        last_notified_at TEXT NOT NULL DEFAULT ''
+      );
+
       CREATE TABLE IF NOT EXISTS gpu_down_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         machine_id INTEGER NOT NULL,
@@ -494,13 +502,55 @@ export function createDatabase(dbPath: string) {
       LEFT JOIN probe_results pr ON pr.id = (
         SELECT id FROM probe_results latest
         WHERE latest.machine_id = m.id AND latest.source = 'probe'
-        ORDER BY latest.checked_at DESC
+        ORDER BY latest.checked_at DESC, latest.id DESC
         LIMIT 1
       )
       WHERE m.active = 1
       ORDER BY m.name
     `).all() as LatestMachineRow[];
-    return rows.map((row) => rowToMachineWithLatest(row, db));
+    const machines = rows.map((row) => rowToMachineWithLatest(row, db));
+    for (const machine of machines) {
+      if (machine.id !== undefined) machine.agentState = getAgentState(machine.id);
+    }
+    const failedMachines = machines.filter((machine) => machine.latest?.sshOk === false);
+    for (const machine of machines) {
+      if (machine.latest?.sshOk) machine.lastSuccessful = machine.latest;
+    }
+    const machineIds = failedMachines.map((machine) => machine.id).filter((id): id is number => id !== undefined);
+    if (machineIds.length === 0) return machines;
+
+    // Agent samples are buffered historical telemetry, not proof of server
+    // contact. Keep last contact tied to the latest successful live SSH probe.
+    const placeholders = machineIds.map(() => "?").join(",");
+    const successfulRows = db.prepare(`
+      SELECT probe.id, probe.poll_run_id, probe.machine_id, probe.checked_at, probe.status,
+             probe.ssh_ok, probe.ssh_error, probe.ssh_user, probe.remote_host, probe.uptime,
+             probe.nvidia_smi_rc, probe.gpu_count, probe.gpu_type, probe.gpu_jobs,
+             probe.gpu_power_w, probe.gpu_avg_temp_c, probe.net_rx_bps, probe.net_tx_bps,
+             probe.cpu_model, probe.cpu_cores, probe.cpu_util_pct, probe.mem_total_kb,
+             probe.mem_used_pct, probe.disk_total_kb, probe.disk_used_pct,
+             probe.bus_off_suspected, probe.bus_off_reason,
+             '' AS kernel_hits, '' AS nvidia_smi_output, '' AS nvidia_smi_error,
+             probe.source, probe.agent_version, probe.duration_ms
+      FROM probe_results probe
+      WHERE probe.machine_id IN (${placeholders})
+        AND probe.source = 'probe' AND probe.ssh_ok = 1
+        AND probe.id = (
+          SELECT previous.id FROM probe_results previous
+          WHERE previous.machine_id = probe.machine_id
+            AND previous.source = 'probe' AND previous.ssh_ok = 1
+          ORDER BY previous.checked_at DESC, previous.id DESC
+          LIMIT 1
+        )
+    `).all(...machineIds) as ProbeRow[];
+    const successfulByMachine = new Map<number, ProbeResult>();
+    for (const result of enrichProbeResults(db, successfulRows.map(rowToProbeResult))) {
+      if (result.machineId !== undefined) successfulByMachine.set(result.machineId, result);
+    }
+    for (const machine of failedMachines) {
+      machine.lastSuccessful = machine.id === undefined ? undefined : successfulByMachine.get(machine.id);
+    }
+    return machines;
   }
 
   function getMachine(id: number): MachineWithLatest | undefined {
@@ -896,6 +946,29 @@ export function createDatabase(dbPath: string) {
     replaceAll(Object.entries(states));
   }
 
+  function getSshFailureReminderStates(): Record<string, SshFailureReminderState> {
+    const rows = db.prepare("SELECT machine_name, failed_since_at, last_notified_at FROM ssh_failure_reminder_states").all() as Array<{
+      machine_name: string;
+      failed_since_at: string;
+      last_notified_at: string;
+    }>;
+    return Object.fromEntries(rows.map((row) => [row.machine_name, {
+      failedSinceAt: row.failed_since_at,
+      lastNotifiedAt: row.last_notified_at,
+    }]));
+  }
+
+  function saveSshFailureReminderStates(states: Record<string, SshFailureReminderState>): void {
+    const replaceAll = db.transaction((entries: Array<[string, SshFailureReminderState]>) => {
+      db.prepare("DELETE FROM ssh_failure_reminder_states").run();
+      const insert = db.prepare("INSERT INTO ssh_failure_reminder_states (machine_name, failed_since_at, last_notified_at) VALUES (?, ?, ?)");
+      for (const [name, state] of entries) {
+        insert.run(name, state.failedSinceAt, state.lastNotifiedAt);
+      }
+    });
+    replaceAll(Object.entries(states));
+  }
+
   /**
    * Folds each completed UTC day of per-GPU telemetry into gpu_daily_stats,
    * which retention pruning never touches — so per-card stats survive far
@@ -1027,7 +1100,7 @@ export function createDatabase(dbPath: string) {
     return (rows as Array<{ id: number; event_at: string; line: string }>).map((row) => ({ id: row.id, eventAt: row.event_at, line: row.line }));
   }
 
-  function getAgentState(machineId: number): { lastIngestedAt: string; lastDrainAt: string; agentVersion: string; lastError: string } | undefined {
+  function getAgentState(machineId: number): AgentState | undefined {
     const row = db.prepare("SELECT * FROM agent_state WHERE machine_id = ?").get(machineId) as
       | { last_ingested_at: string; last_drain_at: string; agent_version: string; last_error: string }
       | undefined;
@@ -1221,12 +1294,29 @@ export function createDatabase(dbPath: string) {
     const agentCutoff = new Date(Date.now() - agentDays * 24 * 60 * 60 * 1000).toISOString();
     const prune = db.transaction((cutoffIso: string, agentCutoffIso: string): number => {
       let deleted = 0;
-      // Each machine's most recent *live probe* row survives regardless of age,
-      // so a long-unreachable machine keeps showing its last known state.
-      // Selected by checked_at (bare-column-with-MAX), not MAX(id): agent
-      // backfill inserts old-by-time rows with high rowids, so id order and
-      // time order diverge.
-      const keepLatest = "SELECT id FROM (SELECT id, MAX(checked_at) FROM probe_results WHERE source = 'probe' GROUP BY machine_id)";
+      // Preserve the newest live probe and newest successful live probe for
+      // each machine regardless of age. The former shows current reachability;
+      // the latter retains the last-contact snapshot through long outages.
+      // Agent backfill rows are excluded because they are historical samples,
+      // not live contact.
+      const keepLatest = `
+        SELECT latest.id FROM probe_results latest
+        WHERE latest.source = 'probe'
+          AND latest.id = (
+            SELECT candidate.id FROM probe_results candidate
+            WHERE candidate.machine_id = latest.machine_id AND candidate.source = 'probe'
+            ORDER BY candidate.checked_at DESC, candidate.id DESC LIMIT 1
+          )
+        UNION
+        SELECT successful.id FROM probe_results successful
+        WHERE successful.source = 'probe' AND successful.ssh_ok = 1
+          AND successful.id = (
+            SELECT candidate.id FROM probe_results candidate
+            WHERE candidate.machine_id = successful.machine_id
+              AND candidate.source = 'probe' AND candidate.ssh_ok = 1
+            ORDER BY candidate.checked_at DESC, candidate.id DESC LIMIT 1
+          )
+      `;
       // Agent samples age out on their own (usually shorter) clock; no
       // keep-latest applies to them since the probe row carries current state.
       deleted += db.prepare(`DELETE FROM gpu_processes WHERE probe_result_id IN (SELECT id FROM probe_results WHERE source = 'agent' AND checked_at < ?)`).run(agentCutoffIso).changes;
@@ -1266,6 +1356,8 @@ export function createDatabase(dbPath: string) {
     getSummary,
     getAlertStates,
     saveAlertStates,
+    getSshFailureReminderStates,
+    saveSshFailureReminderStates,
     setMachineMaintenance,
     setExpectedGpuCount,
     updateMachineSettings,

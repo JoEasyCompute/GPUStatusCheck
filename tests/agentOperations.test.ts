@@ -131,7 +131,7 @@ function setup(count: number, overrides: Partial<AppConfig> = {}) {
     retentionDays: 30, minFreeDiskBytes: 0, adminApiKey: "", agentInstallJobs: 2, agentMaxBatch: 100,
     agentOperationRetentionDays: 30, agentOutputMaxChars: 4000, telegramBotToken: "", telegramChatId: "",
     slackBotToken: "", slackChannelsPath: "", slackDryRun: false, agentDrainEnabled: false,
-    agentDrainTimeoutSeconds: 120, agentDrainMaxLines: 600, agentRetentionDays: 21, notifyRecovery: false,
+    agentDrainTimeoutSeconds: 120, agentDrainMaxLines: 600, agentRetentionDays: 21, sshFailureReminderHours: 6, notifyRecovery: false,
     heartbeatUrl: "", host: "127.0.0.1", port: 0, ...overrides,
   };
   return { db, config, targets };

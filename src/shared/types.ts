@@ -281,6 +281,23 @@ export type EditableRuntimeConfig = {
 };
 
 export type MachineWithLatest = Machine & {
+  /** Most recent live SSH probe, including failures. */
   latest?: ProbeResult;
+  /** Most recent live probe that successfully contacted the machine over SSH. */
+  lastSuccessful?: ProbeResult;
+  /** Most recent agent spool ingestion state, when an agent has reported. */
+  agentState?: AgentState;
   activeGpuNotes?: GpuDownNote[];
+};
+
+export type AgentState = {
+  lastIngestedAt: string;
+  lastDrainAt: string;
+  agentVersion: string;
+  lastError: string;
+};
+
+export type SshFailureReminderState = {
+  failedSinceAt: string;
+  lastNotifiedAt: string;
 };

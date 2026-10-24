@@ -229,6 +229,7 @@ describe("api", () => {
         agentDrainTimeoutSeconds: 120,
         agentDrainMaxLines: 600,
         agentRetentionDays: 21,
+        sshFailureReminderHours: 6,
         notifyRecovery: false,
         heartbeatUrl: "",
         host: "127.0.0.1",
@@ -297,6 +298,7 @@ describe("api", () => {
         agentDrainTimeoutSeconds: 120,
         agentDrainMaxLines: 600,
         agentRetentionDays: 21,
+        sshFailureReminderHours: 6,
         notifyRecovery: false,
         heartbeatUrl: "",
         host: "127.0.0.1",
@@ -362,6 +364,7 @@ describe("api", () => {
         agentDrainTimeoutSeconds: 120,
         agentDrainMaxLines: 600,
         agentRetentionDays: 21,
+        sshFailureReminderHours: 6,
         notifyRecovery: false,
         heartbeatUrl: "",
         host: "127.0.0.1",
@@ -430,6 +433,7 @@ describe("api", () => {
         agentDrainTimeoutSeconds: 120,
         agentDrainMaxLines: 600,
         agentRetentionDays: 21,
+        sshFailureReminderHours: 6,
         notifyRecovery: false,
         heartbeatUrl: "",
         host: "127.0.0.1",
@@ -491,6 +495,7 @@ describe("api", () => {
         agentDrainTimeoutSeconds: 120,
         agentDrainMaxLines: 600,
         agentRetentionDays: 21,
+        sshFailureReminderHours: 6,
         notifyRecovery: false,
         heartbeatUrl: "",
         host: "127.0.0.1",
@@ -592,6 +597,20 @@ describe("api", () => {
     const machines = await app.inject({ method: "GET", url: "/api/machines" });
     const machine = machines.json()[0];
     expect(machine.latest.gpuJobs).toBe("D");
+    expect(machine.lastSuccessful.checkedAt).toBe(machine.latest.checkedAt);
+    db.upsertAgentState(machine.id, {
+      lastIngestedAt: "2026-10-24T09:58:00.000Z",
+      lastDrainAt: "2026-10-24T10:00:00.000Z",
+      agentVersion: "0.1.0",
+      lastError: "drain ssh failed: connection reset",
+    });
+    const withAgentHealth = await app.inject({ method: "GET", url: "/api/machines" });
+    expect(withAgentHealth.json()[0].agentState).toMatchObject({
+      lastIngestedAt: "2026-10-24T09:58:00.000Z",
+      lastDrainAt: "2026-10-24T10:00:00.000Z",
+      agentVersion: "0.1.0",
+      lastError: "drain ssh failed: connection reset",
+    });
 
     const history = await app.inject({ method: "GET", url: `/api/machines/${machine.id}/history` });
     expect(history.json()[0].gpuPowerW).toBe("250.5");
@@ -723,6 +742,7 @@ describe("api", () => {
         agentDrainTimeoutSeconds: 120,
         agentDrainMaxLines: 600,
         agentRetentionDays: 21,
+        sshFailureReminderHours: 6,
         notifyRecovery: false,
         heartbeatUrl: "",
         host: "127.0.0.1",
@@ -803,6 +823,7 @@ function makeConfig(dir: string, machinesPath: string, overrides: Partial<AppCon
     agentDrainTimeoutSeconds: 120,
     agentDrainMaxLines: 600,
     agentRetentionDays: 21,
+    sshFailureReminderHours: 6,
     notifyRecovery: false,
     heartbeatUrl: "",
     host: "127.0.0.1",

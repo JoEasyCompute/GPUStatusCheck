@@ -66,6 +66,7 @@ GPUCHECK_PROBE_TIMEOUT=60
 GPUCHECK_JOBS=8
 GPUCHECK_STATE_FILE=.omx/gpucheck-state.json
 GPUCHECK_NOTIFY_RECOVERY=0
+GPUCHECK_SSH_FAILURE_REMINDER_HOURS=6
 GPUCHECK_SKIP_LOGS=0
 TELEGRAM_BOT_TOKEN=123456789:AAExampleToken
 TELEGRAM_CHAT_ID=-1001234567890
@@ -172,8 +173,10 @@ SQLite, and serves a React dashboard with:
   and total disk with current usage), tabbed charts (Power, Temperature,
   Utilization, Network in/out, and System with CPU/RAM/disk utilization %)
   over the last 24 hours with pinch-to-zoom and drag-to-pan, GPU process
-  history, and probe history; clicking the IP copies a ready-to-use SSH
-  command
+  history, and probe history; when SSH fails, the current failure remains the
+  machine status while the latest successful probe time and its GPU, process,
+  CPU, memory, and disk snapshot remain visible; clicking the IP copies a
+  ready-to-use SSH command
 - GPU lifecycle tracking by UUID: every telemetry row records the GPU's UUID,
   an identity table follows each physical card across machines/slots/tenants
   (sighting segments), per-GPU job rows carry the owner renting the GPU at
@@ -403,7 +406,14 @@ window fills itself in as soon as the host is reachable again.
 Machines without the agent behave exactly as before; any mix is fine, forever.
 Machine status, alerting, and GPU drop detection stay driven by the live poll
 only — agent data enriches charts, per-GPU history, daily rollups, and the
-new per-machine "Kernel events" modal section.
+new per-machine "Kernel events" modal section. Agent sample timestamps are
+historical telemetry and do not count as successful server contact; while SSH
+is unavailable, the dashboard shows the latest successful live-probe snapshot.
+Retention preserves both the latest live result and latest successful live
+result for each machine, even when they are older than the normal history window.
+The machine modal also shows the agent version, last sample ingested, last
+successful drain, and latest agent note so a stalled spool is distinguishable
+from an agent that is still reporting.
 
 Install / upgrade / remove (needs passwordless sudo on the host; hosts
 without it are skipped and stay SSH-poll-only):
@@ -468,6 +478,13 @@ unchanged problem does not re-alert, and optional recovery notices with
 `GPUCHECK_NOTIFY_RECOVERY=1`. Dedup state lives in the SQLite database
 (`alert_states` table). If a Telegram send fails, the state is not advanced,
 so the alert retries on the next poll.
+
+An SSH-failed machine also gets a reminder every six hours by default while
+the failure continues. Set `GPUCHECK_SSH_FAILURE_REMINDER_HOURS` to another
+positive number to change the interval, or `0` to disable reminders. Reminder
+timing is persisted in SQLite and advances only after Telegram confirms
+delivery. Maintenance machines stay muted; their reminder timer restarts after
+each muted poll so leaving maintenance does not trigger an overdue reminder.
 
 If you run the dashboard continuously, you no longer need the Python watcher
 loop for alerting; the CLI remains useful for one-shot checks from a terminal

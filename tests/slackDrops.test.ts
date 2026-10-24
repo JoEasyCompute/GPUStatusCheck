@@ -28,7 +28,7 @@ function setup(options: { channelsJson?: string } = {}) {
     telegramBotToken: "", telegramChatId: "",
     slackBotToken: "xoxb-test", slackChannelsPath: channelsPath, slackDryRun: false,
     agentDrainEnabled: false, agentDrainTimeoutSeconds: 120, agentDrainMaxLines: 600, agentRetentionDays: 21,
-    notifyRecovery: false, heartbeatUrl: "", host: "127.0.0.1", port: 0,
+    sshFailureReminderHours: 6, notifyRecovery: false, heartbeatUrl: "", host: "127.0.0.1", port: 0,
   };
 
   const posts: SlackPost[] = [];

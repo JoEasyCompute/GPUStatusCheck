@@ -25,7 +25,8 @@ export function MachineDetailModal({
   adminUnlocked: boolean;
 }) {
   const [copied, setCopied] = useState(false);
-  const latest = history[0] ?? machine.latest;
+  const latest = machine.latest ?? history[0];
+  const snapshot = latest?.sshOk === false ? machine.lastSuccessful ?? latest : latest;
   const copySsh = async () => {
     await onCopySsh(machine);
     setCopied(true);
@@ -38,7 +39,7 @@ export function MachineDetailModal({
           <h2>{machine.name}</h2>
           <span className={`status ${latest?.status ?? "unknown"}`}>{formatStatus(latest?.status)}</span>
           {machine.maintenance ? <span className="chip maintenance">maintenance</span> : null}
-          {latest?.agentVersion ? <span className="chip agent" title={`On-host agent v${latest.agentVersion} — buffered sampling active`}>agent</span> : null}
+          {snapshot?.agentVersion ? <span className="chip agent" title={`On-host agent v${snapshot.agentVersion} — buffered sampling active`}>agent</span> : null}
           <button className="ip-copy" title="Copy SSH command" onClick={() => void copySsh()}>
             {machine.ip}
           </button>
@@ -60,9 +61,13 @@ export function MachineDetailModal({
 
 function DetailPane({ machine, history, processes, onSelectGpu }: { machine: MachineWithLatest; history: ProbeResult[]; processes: GpuProcess[]; onSelectGpu?: (uuid: string) => void }) {
   const [processSearch, setProcessSearch] = useState("");
-  const latest = history[0] ?? machine.latest;
+  const current = machine.latest ?? history[0];
+  const latest = current?.sshOk === false ? machine.lastSuccessful ?? current : current;
+  const displayedProcesses = current?.sshOk === false && machine.lastSuccessful
+    ? machine.lastSuccessful.processes ?? processes
+    : processes;
   const processNeedle = processSearch.trim().toLowerCase();
-  const filteredProcesses = processes.filter((process) => {
+  const filteredProcesses = displayedProcesses.filter((process) => {
     if (!processNeedle) {
       return true;
     }
@@ -94,10 +99,24 @@ function DetailPane({ machine, history, processes, onSelectGpu }: { machine: Mac
         <div><dt>RAM</dt><dd>{formatCapacity(latest?.memTotalKb, latest?.memUsedPct)}</dd></div>
         <div><dt>Disk</dt><dd>{formatCapacity(latest?.diskTotalKb, latest?.diskUsedPct)}</dd></div>
         <div><dt>Net I/O</dt><dd>{formatNetRates(latest)}</dd></div>
-        <div><dt>SSH error</dt><dd>{errorText || "-"}</dd></div>
+        <div><dt>Last contact</dt><dd>{formatTime(machine.lastSuccessful?.checkedAt)}</dd></div>
+        <div><dt>SSH error</dt><dd>{current?.sshError || errorText || "-"}</dd></div>
         <div><dt>Bus-off</dt><dd>{busOffText || "-"}</dd></div>
+        {latest?.agentVersion ? (
+          <>
+            <div><dt>Agent version</dt><dd>{latest.agentVersion}</dd></div>
+            <div><dt>Last sample ingested</dt><dd>{formatTime(machine.agentState?.lastIngestedAt)}</dd></div>
+            <div><dt>Last successful drain</dt><dd>{formatTime(machine.agentState?.lastDrainAt)}</dd></div>
+            <div><dt>Agent note</dt><dd>{machine.agentState?.lastError || (machine.agentState?.lastDrainAt ? "No recent issue" : "No drain recorded")}</dd></div>
+          </>
+        ) : null}
         <div><dt>Notes</dt><dd>{formatMachineNotes(machine)}</dd></div>
       </dl>
+      {current?.sshOk === false && machine.lastSuccessful ? (
+        <p className="empty-chart">
+          SSH failed at {formatTime(current.checkedAt)}. Showing the {formatStatus(machine.lastSuccessful.status).toLowerCase()} snapshot from the last successful contact at {formatTime(machine.lastSuccessful.checkedAt)}.
+        </p>
+      ) : null}
       {latest?.kernelHits ? <pre className="evidence-block">{latest.kernelHits}</pre> : null}
 
       <details className="detail-section" open>

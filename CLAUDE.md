@@ -138,8 +138,12 @@ successful probe (`scripts/agent-drain.sh`, `src/server/agent.ts`) when
 - Alert dedup state (`alert_states` table) only advances after successful
   Telegram delivery, so failed sends retry next poll. Machines in maintenance
   are muted but their state is still tracked (no stale alerts on unmute).
-- Each machine's most recent probe row survives retention pruning so
-  long-unreachable machines keep their last known state.
+- Dashboard SSH-failure reminders default to every 6 hours and are configured
+  with `GPUCHECK_SSH_FAILURE_REMINDER_HOURS` (`0` disables). Persist reminder
+  timestamps only after Telegram delivery; reset the timer during maintenance.
+- Each machine's most recent live probe and most recent successful live probe
+  survive retention pruning so long-unreachable machines keep both their
+  current reachability and last-contact snapshot. Agent samples are excluded.
 - `expected_gpu_count` is the highest healthy count seen; fewer visible GPUs
   on a healthy probe marks the machine degraded ("only N/M GPUs visible").
   That is a count-level signal only — which *card* vanished comes from the

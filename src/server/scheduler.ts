@@ -1,5 +1,5 @@
 import type { Machine, PollStatus, ProbeResult } from "../shared/types";
-import { buildAlerts, formatAlertMessage, sendTelegramMessage, splitMessage, type AlertInput } from "./alerts";
+import { buildAlerts, buildSshFailureReminders, formatAlertMessage, sendTelegramMessage, splitMessage, type AlertInput } from "./alerts";
 import type { AppConfig } from "./config";
 import type { DashboardDatabase } from "./db";
 import { ingestDrainBatch, makeDrainAgent, parseDrainOutput, type DrainAgent } from "./agent";
@@ -463,18 +463,37 @@ export class PollScheduler {
     try {
       const previous = this.db.getAlertStates();
       const { lines, nextStates } = buildAlerts(outcomes, previous, this.config.notifyRecovery);
+      const reminderNow = new Date().toISOString();
+      const previousReminderStates = this.db.getSshFailureReminderStates();
+      const reminders = buildSshFailureReminders(
+        outcomes,
+        previousReminderStates,
+        this.config.sshFailureReminderHours,
+        reminderNow,
+      );
+      const allLines = [...lines, ...reminders.lines];
       const configured = Boolean(this.config.telegramBotToken && this.config.telegramChatId);
 
-      if (configured && lines.length > 0) {
+      if (configured && allLines.length > 0) {
         const ok = outcomes.filter((outcome) => outcome.status === "ok").length;
         const degraded = outcomes.filter((outcome) => outcome.status === "degraded").length;
         const sshFailed = outcomes.filter((outcome) => outcome.status === "ssh_failed").length;
-        const message = formatAlertMessage(lines, ok, degraded, sshFailed);
+        const message = formatAlertMessage(allLines, ok, degraded, sshFailed);
         try {
           for (const chunk of splitMessage(message)) {
             await this.sendAlertChunk(chunk);
           }
-          console.log(`sent telegram alert (${lines.length} machines)`);
+          for (const outcome of outcomes) {
+            if (outcome.status === "ssh_failed" && !outcome.muted && previous[outcome.name] !== "ssh_failed") {
+              const state = reminders.nextStates[outcome.name];
+              if (state) state.lastNotifiedAt = reminderNow;
+            }
+          }
+          for (const name of reminders.remindedMachineNames) {
+            const state = reminders.nextStates[name];
+            if (state) state.lastNotifiedAt = reminderNow;
+          }
+          console.log(`sent telegram alert (${allLines.length} machines)`);
         } catch (error) {
           // Keep the previous alert state so the transition re-alerts on the
           // next poll instead of being swallowed by a transient send failure.
@@ -484,6 +503,7 @@ export class PollScheduler {
       }
 
       this.db.saveAlertStates(nextStates);
+      this.db.saveSshFailureReminderStates(reminders.nextStates);
     } catch (error) {
       console.error("alert delivery failed", error);
     }

@@ -111,6 +111,7 @@ function makeConfig(csvPath: string, dir: string): AppConfig {
     agentDrainTimeoutSeconds: 120,
     agentDrainMaxLines: 600,
     agentRetentionDays: 21,
+    sshFailureReminderHours: 6,
     notifyRecovery: false,
     heartbeatUrl: "",
     host: "127.0.0.1",

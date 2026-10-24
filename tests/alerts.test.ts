@@ -2,13 +2,54 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAlerts, formatAlertMessage, splitMessage } from "../src/server/alerts";
+import { buildAlerts, buildSshFailureReminders, formatAlertMessage, splitMessage } from "../src/server/alerts";
 import type { AppConfig } from "../src/server/config";
 import { createDatabase } from "../src/server/db";
 import { PollScheduler } from "../src/server/scheduler";
 import type { ProbeResult } from "../src/shared/types";
 
 describe("alerts", () => {
+  it("persists SSH failure reminder timing across database reads", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-alert-reminder-state-"));
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    const states = {
+      alpha: { failedSinceAt: "2026-10-24T10:00:00.000Z", lastNotifiedAt: "2026-10-24T16:00:00.000Z" },
+    };
+    db.saveSshFailureReminderStates(states);
+    expect(db.getSshFailureReminderStates()).toEqual(states);
+    db.close();
+  });
+
+  it("reminds on a configurable cadence and resets after recovery", () => {
+    const failed = [{ name: "alpha", ip: "10.0.0.1", status: "ssh_failed", reason: "connection refused" }];
+    const start = "2026-10-24T10:00:00.000Z";
+    const first = buildSshFailureReminders(failed, {}, 6, start);
+    expect(first.lines).toEqual([]);
+    expect(first.nextStates.alpha).toEqual({ failedSinceAt: start, lastNotifiedAt: "" });
+
+    const dueAt = "2026-10-24T16:00:00.000Z";
+    const due = buildSshFailureReminders(failed, first.nextStates, 6, dueAt);
+    expect(due.lines[0]).toContain("STILL SSH FAILED");
+    expect(due.remindedMachineNames).toEqual(["alpha"]);
+    expect(due.nextStates.alpha).toEqual({ failedSinceAt: start, lastNotifiedAt: "" });
+
+    const delivered = { ...due.nextStates, alpha: { ...due.nextStates.alpha!, lastNotifiedAt: dueAt } };
+    expect(buildSshFailureReminders(failed, delivered, 6, "2026-10-24T21:59:00.000Z").lines).toEqual([]);
+    expect(buildSshFailureReminders(failed, delivered, 0, "2026-10-25T00:00:00.000Z").lines).toEqual([]);
+    expect(buildSshFailureReminders([{ ...failed[0], status: "ok" }], delivered, 6, "2026-10-25T00:00:00.000Z").nextStates).toEqual({});
+  });
+
+  it("does not send reminders during maintenance and restarts the timer after it", () => {
+    const start = "2026-10-24T10:00:00.000Z";
+    const failed = [{ name: "alpha", ip: "10.0.0.1", status: "ssh_failed", reason: "timeout" }];
+    const initial = buildSshFailureReminders(failed, {}, 6, start);
+    const muted = buildSshFailureReminders([{ ...failed[0], muted: true }], initial.nextStates, 6, "2026-10-24T16:00:00.000Z");
+    expect(muted.lines).toEqual([]);
+    expect(muted.nextStates.alpha?.failedSinceAt).toBe("2026-10-24T16:00:00.000Z");
+    expect(buildSshFailureReminders(failed, muted.nextStates, 6, "2026-10-24T21:59:00.000Z").lines).toEqual([]);
+  });
+
   it("emits alerts only on status transitions", () => {
     const results = [
       { name: "alpha", ip: "10.0.0.1", status: "degraded", reason: "kernel/log indicators" },
@@ -110,6 +151,7 @@ describe("alerts", () => {
       agentDrainTimeoutSeconds: 120,
       agentDrainMaxLines: 600,
       agentRetentionDays: 21,
+      sshFailureReminderHours: 6,
       notifyRecovery: false,
       heartbeatUrl: "",
       host: "127.0.0.1",
@@ -149,16 +191,33 @@ describe("alerts", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("alpha (10.0.0.1) SSH FAILED: connection refused");
     expect(db.getAlertStates()).toEqual({ alpha: "ssh_failed" });
+    expect(db.getSshFailureReminderStates().alpha?.lastNotifiedAt).toBeTruthy();
 
     // Unchanged status stays silent.
     await scheduler.pollOnce();
     expect(sent).toHaveLength(1);
 
+    // A long-lived failure produces a reminder, and failed delivery retries
+    // without advancing its persisted notification time.
+    const oldReminderAt = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString();
+    db.raw.prepare("UPDATE ssh_failure_reminder_states SET failed_since_at = ?, last_notified_at = ? WHERE machine_name = ?")
+      .run(oldReminderAt, oldReminderAt, "alpha");
+    failSend = true;
+    await scheduler.pollOnce();
+    expect(sent).toHaveLength(1);
+    expect(db.getSshFailureReminderStates().alpha?.lastNotifiedAt).toBe(oldReminderAt);
+    failSend = false;
+    await scheduler.pollOnce();
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toContain("STILL SSH FAILED");
+    expect(db.getSshFailureReminderStates().alpha?.lastNotifiedAt).not.toBe(oldReminderAt);
+
     // Silent recovery still updates the stored state.
     status = "ok";
     await scheduler.pollOnce();
-    expect(sent).toHaveLength(1);
+    expect(sent).toHaveLength(2);
     expect(db.getAlertStates()).toEqual({ alpha: "ok" });
+    expect(db.getSshFailureReminderStates()).toEqual({});
 
     db.close();
   });
@@ -200,6 +259,7 @@ describe("alerts", () => {
       agentDrainTimeoutSeconds: 120,
       agentDrainMaxLines: 600,
       agentRetentionDays: 21,
+      sshFailureReminderHours: 6,
       notifyRecovery: false,
       heartbeatUrl: "",
       host: "127.0.0.1",

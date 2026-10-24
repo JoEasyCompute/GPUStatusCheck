@@ -1,3 +1,5 @@
+import type { SshFailureReminderState } from "../shared/types";
+
 export type AlertInput = {
   name: string;
   ip: string;
@@ -10,6 +12,12 @@ export type AlertInput = {
 export type BuiltAlerts = {
   lines: string[];
   nextStates: Record<string, string>;
+};
+
+export type BuiltSshFailureReminders = {
+  lines: string[];
+  nextStates: Record<string, SshFailureReminderState>;
+  remindedMachineNames: string[];
 };
 
 const PROBLEM_STATUSES = new Set(["degraded", "ssh_failed"]);
@@ -45,6 +53,38 @@ export function buildAlerts(
   }
 
   return { lines, nextStates };
+}
+
+export function buildSshFailureReminders(
+  results: AlertInput[],
+  previous: Record<string, SshFailureReminderState>,
+  reminderHours: number,
+  now = new Date().toISOString(),
+): BuiltSshFailureReminders {
+  const lines: string[] = [];
+  const nextStates: Record<string, SshFailureReminderState> = {};
+  const remindedMachineNames: string[] = [];
+  const reminderMs = Number.isFinite(reminderHours) && reminderHours > 0 ? reminderHours * 60 * 60 * 1000 : 0;
+  const nowMs = Date.parse(now);
+
+  for (const result of results) {
+    if (result.status !== "ssh_failed") continue;
+    const prior = previous[result.name];
+    const failedSinceAt = result.muted ? now : prior?.failedSinceAt ?? now;
+    const lastNotifiedAt = prior?.lastNotifiedAt ?? "";
+    const dueFrom = Math.max(Date.parse(failedSinceAt), Date.parse(lastNotifiedAt) || 0);
+    const due = !result.muted && reminderMs > 0 && Number.isFinite(nowMs) && nowMs - dueFrom >= reminderMs;
+    if (due) {
+      lines.push(`• ${result.name} (${result.ip}) STILL SSH FAILED: ${result.reason || "unknown issue"}; failed since ${failedSinceAt}`);
+      remindedMachineNames.push(result.name);
+    }
+    nextStates[result.name] = {
+      failedSinceAt,
+      lastNotifiedAt,
+    };
+  }
+
+  return { lines, nextStates, remindedMachineNames };
 }
 
 export function formatAlertMessage(lines: string[], ok: number, degraded: number, sshFailed: number): string {

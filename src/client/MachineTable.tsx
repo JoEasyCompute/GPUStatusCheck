@@ -82,6 +82,7 @@ export function MachineTable({
             <SortableHeader label="Power (W)" sortKey="power" sort={sort} onSort={toggleSort} align="num" />
             <SortableHeader label="Temp (°C)" sortKey="temp" sort={sort} onSort={toggleSort} align="num" />
             <SortableHeader label="Checked" sortKey="checked" sort={sort} onSort={toggleSort} />
+            <th>Last contact</th>
           </tr>
         </thead>
         <tbody>
@@ -94,7 +95,7 @@ export function MachineTable({
                   aria-expanded={!collapsed.has(`${groupBy}:${group.label}`)}
                   onClick={() => toggleGroup(group.label!)}
                 >
-                  <td colSpan={adminUnlocked ? 12 : 11}>
+                  <td colSpan={adminUnlocked ? 13 : 12}>
                     <span className="caret" aria-hidden="true">{collapsed.has(`${groupBy}:${group.label}`) ? "▸" : "▾"}</span>
                     {group.label || "Unassigned"}
                     <GroupStats stats={computeGroupStats(group.machines)} />
@@ -117,7 +118,7 @@ export function MachineTable({
             ...(group.label !== undefined && chartsOpen.has(`${groupBy}:${group.label}`) && (groupBy === "owner" || groupBy === "location")
               ? [(
                 <tr key={`group-charts-${group.label}`} className="group-charts-row">
-                  <td colSpan={adminUnlocked ? 12 : 11}>
+                  <td colSpan={adminUnlocked ? 13 : 12}>
                     <GroupCharts groupBy={groupBy} label={group.label} />
                   </td>
                 </tr>
@@ -140,17 +141,28 @@ export function MachineTable({
               <td>
                 <span className={`status ${machine.latest?.status ?? "unknown"}`}>{formatStatus(machine.latest?.status)}</span>
                 {machine.maintenance ? <span className="chip maintenance" title="Alerts muted while in maintenance">M</span> : null}
-                {machine.latest?.agentVersion ? <span className="chip agent" title={`On-host agent v${machine.latest.agentVersion}`}>A</span> : null}
+                {(machine.latest?.sshOk === false ? machine.lastSuccessful : machine.latest)?.agentVersion ? (
+                  <span
+                    className="chip agent"
+                    title={`On-host agent v${(machine.latest?.sshOk === false ? machine.lastSuccessful : machine.latest)?.agentVersion}; last sample ingested ${formatTime(machine.agentState?.lastIngestedAt)}; last successful drain ${formatTime(machine.agentState?.lastDrainAt)}${machine.agentState?.lastError ? `; note: ${machine.agentState.lastError}` : ""}`}
+                  >A</span>
+                ) : null}
               </td>
               <td>{machine.location || "-"}</td>
               <td>{machine.owner || "-"}</td>
-              <td>{machine.latest?.gpuType || "-"}</td>
-              <td className="num">{machine.latest?.gpuCount ?? "-"}</td>
-              <td><GpuJobPills latest={machine.latest} /></td>
+              <td>{(machine.latest?.sshOk === false ? machine.lastSuccessful : machine.latest)?.gpuType || "-"}</td>
+              <td className="num">{(machine.latest?.sshOk === false ? machine.lastSuccessful : machine.latest)?.gpuCount ?? "-"}</td>
+              <td><GpuJobPills latest={machine.latest?.sshOk === false ? machine.lastSuccessful : machine.latest} /></td>
               <td className="note-cell">{formatNotes(machine)}</td>
-              <td className="num">{machine.latest?.gpuPowerW || "-"}</td>
-              <td className="num">{machine.latest?.gpuAvgTempC || "-"}</td>
+              <td className="num">{(machine.latest?.sshOk === false ? machine.lastSuccessful : machine.latest)?.gpuPowerW || "-"}</td>
+              <td className="num">{(machine.latest?.sshOk === false ? machine.lastSuccessful : machine.latest)?.gpuAvgTempC || "-"}</td>
               <td className="time-cell">{formatTime(machine.latest?.checkedAt)}</td>
+              <td className="time-cell">
+                {formatTime(machine.lastSuccessful?.checkedAt)}
+                {machine.latest?.sshOk === false && machine.lastSuccessful ? (
+                  <small>Last status: {formatStatus(machine.lastSuccessful.status)}</small>
+                ) : null}
+              </td>
             </tr>
             )),
           ])}

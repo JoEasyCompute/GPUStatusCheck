@@ -243,6 +243,104 @@ describe("database", () => {
     db.close();
   });
 
+  it("keeps the last successful snapshot alongside the current SSH failure", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-last-successful-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+    const machine = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22 });
+    const checkedAt = "2026-10-24T09:00:00.000Z";
+    const healthyRun = db.createPollRun(1);
+    db.insertProbeResult(healthyRun, machine.id!, {
+      name: "alpha", ip: "10.0.0.1", sshOk: true, status: "degraded", gpuCount: 2,
+      gpuType: "RTX 4090", gpuJobs: "Dx", cpuModel: "EPYC", cpuCores: 64,
+      cpuUtilPct: 35, memTotalKb: 1000, memUsedPct: 40, diskTotalKb: 2000, diskUsedPct: 70,
+      processes: [{ gpuIndex: 0, pid: 123, commandLine: "python train.py" }],
+      gpuMetrics: [{ gpuIndex: 0, gpuUtil: 88, tempC: 65, powerW: 300 }],
+    });
+    db.raw.prepare("UPDATE probe_results SET checked_at = ? WHERE poll_run_id = ?").run(checkedAt, healthyRun);
+    db.raw.prepare("UPDATE gpu_processes SET checked_at = ? WHERE poll_run_id = ?").run(checkedAt, healthyRun);
+    db.raw.prepare("UPDATE gpu_metrics SET checked_at = ? WHERE poll_run_id = ?").run(checkedAt, healthyRun);
+    db.finishPollRun(healthyRun);
+
+    const failedRun = db.createPollRun(1);
+    db.insertProbeResult(failedRun, machine.id!, {
+      name: "alpha", ip: "10.0.0.1", sshOk: false, status: "ssh_failed", sshError: "connection refused",
+    });
+    db.finishPollRun(failedRun);
+
+    expect(db.listMachines()[0]).toMatchObject({
+      latest: { status: "ssh_failed", sshError: "connection refused" },
+      lastSuccessful: {
+        checkedAt, status: "degraded", cpuModel: "EPYC", cpuCores: 64,
+        cpuUtilPct: 35, memUsedPct: 40, diskUsedPct: 70,
+        processes: [expect.objectContaining({ pid: 123, commandLine: "python train.py" })],
+        gpuMetrics: [expect.objectContaining({ gpuUtil: 88, tempC: 65, powerW: 300 })],
+      },
+    });
+    db.close();
+  });
+
+  it("retains both latest reachability and last successful probe through a long outage", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-prune-last-successful-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+    const machine = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22 });
+    const olderSuccess = db.createPollRun(1);
+    db.insertProbeResult(olderSuccess, machine.id!, { name: "alpha", ip: "10.0.0.1", sshOk: true, status: "ok" });
+    const lastSuccess = db.createPollRun(1);
+    db.insertProbeResult(lastSuccess, machine.id!, {
+      name: "alpha", ip: "10.0.0.1", sshOk: true, status: "degraded",
+      processes: [{ gpuIndex: 0, pid: 456, commandLine: "python last-run.py" }],
+      gpuMetrics: [{ gpuIndex: 0, gpuUtil: 77, powerW: 250 }],
+    });
+    const latestFailure = db.createPollRun(1);
+    db.insertProbeResult(latestFailure, machine.id!, { name: "alpha", ip: "10.0.0.1", sshOk: false, status: "ssh_failed" });
+    const day = 24 * 60 * 60 * 1000;
+    const backdate = (runId: number, daysAgo: number) => {
+      const checkedAt = new Date(Date.now() - daysAgo * day).toISOString();
+      db.raw.prepare("UPDATE probe_results SET checked_at = ? WHERE poll_run_id = ?").run(checkedAt, runId);
+      db.raw.prepare("UPDATE poll_runs SET started_at = ? WHERE id = ?").run(checkedAt, runId);
+    };
+    backdate(olderSuccess, 50);
+    backdate(lastSuccess, 45);
+    backdate(latestFailure, 40);
+
+    db.pruneHistory(30);
+
+    const retained = db.raw.prepare("SELECT status FROM probe_results WHERE machine_id = ? ORDER BY checked_at DESC").all(machine.id!) as Array<{ status: string }>;
+    expect(retained.map((row) => row.status)).toEqual(["ssh_failed", "degraded"]);
+    expect(db.listMachines()[0]).toMatchObject({
+      latest: { status: "ssh_failed" },
+      lastSuccessful: {
+        status: "degraded",
+        processes: [expect.objectContaining({ pid: 456, commandLine: "python last-run.py" })],
+        gpuMetrics: [expect.objectContaining({ gpuUtil: 77, powerW: 250 })],
+      },
+    });
+    db.close();
+  });
+
+  it("includes persisted agent drain health in machine results", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-machine-agent-health-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+    const machine = db.upsertMachine({ name: "alpha", ip: "10.0.0.1", sshHost: "10.0.0.1", sshPort: 22 });
+    db.upsertAgentState(machine.id!, {
+      lastIngestedAt: "2026-10-24T09:58:00.000Z",
+      lastDrainAt: "2026-10-24T10:00:00.000Z",
+      agentVersion: "0.1.0",
+      lastError: "drain ssh failed: connection reset",
+    });
+
+    expect(db.listMachines()[0]?.agentState).toEqual({
+      lastIngestedAt: "2026-10-24T09:58:00.000Z",
+      lastDrainAt: "2026-10-24T10:00:00.000Z",
+      agentVersion: "0.1.0",
+      lastError: "drain ssh failed: connection reset",
+    });
+    db.close();
+  });
+
   it("prunes history older than retention but keeps each machine's latest probe", () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-db-prune-"));
     const db = createDatabase(join(dir, "test.sqlite"));
