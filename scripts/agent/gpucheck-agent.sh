@@ -34,7 +34,12 @@ sample=$(sh "$PROBE" "$(hostname 2>/dev/null || echo unknown)" local 0 2>/dev/nu
 # first run is bounded by tail so an old journal cannot flood the spool.
 kernel_events=""
 if command -v journalctl >/dev/null 2>&1; then
-    kernel_events=$(journalctl -k --cursor-file="$CURSOR" -o short-iso-precise --utc 2>/dev/null \
+    # On the first run there is no cursor. Limit the initial history scan;
+    # tail alone would cap saved lines only after journalctl read the full log.
+    journal_limit=""
+    [ -s "$CURSOR" ] || journal_limit="-n 500"
+    # journal_limit intentionally splits into zero or two arguments.
+    kernel_events=$(journalctl -k $journal_limit --cursor-file="$CURSOR" -o short-iso-precise --utc 2>/dev/null \
         | grep -Ei 'Xid|NVRM|fallen off the bus|bus-off|Out of memory|oom-kill' 2>/dev/null \
         | tail -n 200) || true
 fi
