@@ -99,7 +99,7 @@ function DetailPane({ machine, history, processes, onSelectGpu }: { machine: Mac
         <div><dt>RAM</dt><dd>{formatCapacity(latest?.memTotalKb, latest?.memUsedPct)}</dd></div>
         <div><dt>Disk</dt><dd>{formatCapacity(latest?.diskTotalKb, latest?.diskUsedPct)}</dd></div>
         <div><dt>Net I/O</dt><dd>{formatNetRates(latest)}</dd></div>
-        <div><dt>Last contact</dt><dd>{formatTime(machine.lastSuccessful?.checkedAt)}</dd></div>
+        <div><dt>Last seen</dt><dd>{formatTime(machine.lastSuccessful?.checkedAt)}</dd></div>
         <div><dt>SSH error</dt><dd>{current?.sshError || errorText || "-"}</dd></div>
         <div><dt>Bus-off</dt><dd>{busOffText || "-"}</dd></div>
         {latest?.agentVersion ? (
@@ -114,7 +114,7 @@ function DetailPane({ machine, history, processes, onSelectGpu }: { machine: Mac
       </dl>
       {current?.sshOk === false && machine.lastSuccessful ? (
         <p className="empty-chart">
-          SSH failed at {formatTime(current.checkedAt)}. Showing the {formatStatus(machine.lastSuccessful.status).toLowerCase()} snapshot from the last successful contact at {formatTime(machine.lastSuccessful.checkedAt)}.
+          SSH failed at {formatTime(current.checkedAt)}. Showing the {formatStatus(machine.lastSuccessful.status).toLowerCase()} snapshot last seen at {formatTime(machine.lastSuccessful.checkedAt)}.
         </p>
       ) : null}
       {latest?.kernelHits ? <pre className="evidence-block">{latest.kernelHits}</pre> : null}

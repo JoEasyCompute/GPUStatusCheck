@@ -82,7 +82,7 @@ export function MachineTable({
             <SortableHeader label="Power (W)" sortKey="power" sort={sort} onSort={toggleSort} align="num" />
             <SortableHeader label="Temp (°C)" sortKey="temp" sort={sort} onSort={toggleSort} align="num" />
             <SortableHeader label="Checked" sortKey="checked" sort={sort} onSort={toggleSort} />
-            <th>Last contact</th>
+            <th>Last seen</th>
           </tr>
         </thead>
         <tbody>
