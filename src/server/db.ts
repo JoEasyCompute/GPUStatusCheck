@@ -516,39 +516,29 @@ export function createDatabase(dbPath: string) {
     for (const machine of machines) {
       if (machine.latest?.sshOk) machine.lastSuccessful = machine.latest;
     }
-    const machineIds = failedMachines.map((machine) => machine.id).filter((id): id is number => id !== undefined);
-    if (machineIds.length === 0) return machines;
+    if (failedMachines.length === 0) return machines;
 
     // Agent samples are buffered historical telemetry, not proof of server
     // contact. Keep last contact tied to the latest successful live SSH probe.
-    const placeholders = machineIds.map(() => "?").join(",");
-    const successfulRows = db.prepare(`
-      SELECT probe.id, probe.poll_run_id, probe.machine_id, probe.checked_at, probe.status,
-             probe.ssh_ok, probe.ssh_error, probe.ssh_user, probe.remote_host, probe.uptime,
-             probe.nvidia_smi_rc, probe.gpu_count, probe.gpu_type, probe.gpu_jobs,
-             probe.gpu_power_w, probe.gpu_avg_temp_c, probe.net_rx_bps, probe.net_tx_bps,
-             probe.cpu_model, probe.cpu_cores, probe.cpu_util_pct, probe.mem_total_kb,
-             probe.mem_used_pct, probe.disk_total_kb, probe.disk_used_pct,
-             probe.bus_off_suspected, probe.bus_off_reason,
+    const latestSuccessful = db.prepare(`
+      SELECT id, poll_run_id, machine_id, checked_at, status,
+             ssh_ok, ssh_error, ssh_user, remote_host, uptime,
+             nvidia_smi_rc, gpu_count, gpu_type, gpu_jobs,
+             gpu_power_w, gpu_avg_temp_c, net_rx_bps, net_tx_bps,
+             cpu_model, cpu_cores, cpu_util_pct, mem_total_kb,
+             mem_used_pct, disk_total_kb, disk_used_pct,
+             bus_off_suspected, bus_off_reason,
              '' AS kernel_hits, '' AS nvidia_smi_output, '' AS nvidia_smi_error,
-             probe.source, probe.agent_version, probe.duration_ms
-      FROM probe_results probe
-      WHERE probe.machine_id IN (${placeholders})
-        AND probe.source = 'probe' AND probe.ssh_ok = 1
-        AND probe.id = (
-          SELECT previous.id FROM probe_results previous
-          WHERE previous.machine_id = probe.machine_id
-            AND previous.source = 'probe' AND previous.ssh_ok = 1
-          ORDER BY previous.checked_at DESC, previous.id DESC
-          LIMIT 1
-        )
-    `).all(...machineIds) as ProbeRow[];
-    const successfulByMachine = new Map<number, ProbeResult>();
-    for (const result of enrichProbeResults(db, successfulRows.map(rowToProbeResult))) {
-      if (result.machineId !== undefined) successfulByMachine.set(result.machineId, result);
-    }
+             source, agent_version, duration_ms
+      FROM probe_results
+      WHERE machine_id = ? AND source = 'probe' AND ssh_ok = 1
+      ORDER BY checked_at DESC, id DESC
+      LIMIT 1
+    `);
     for (const machine of failedMachines) {
-      machine.lastSuccessful = machine.id === undefined ? undefined : successfulByMachine.get(machine.id);
+      if (machine.id === undefined) continue;
+      const row = latestSuccessful.get(machine.id) as ProbeRow | undefined;
+      if (row) machine.lastSuccessful = enrichProbeResult(db, rowToProbeResult(row));
     }
     return machines;
   }
@@ -1299,30 +1289,28 @@ export function createDatabase(dbPath: string) {
       // the latter retains the last-contact snapshot through long outages.
       // Agent backfill rows are excluded because they are historical samples,
       // not live contact.
-      const keepLatest = `
-        SELECT MAX(latest.id)
-        FROM probe_results latest
-        JOIN (
-          SELECT machine_id, MAX(checked_at) AS checked_at
-          FROM probe_results WHERE source = 'probe'
-          GROUP BY machine_id
-        ) newest ON newest.machine_id = latest.machine_id AND newest.checked_at = latest.checked_at
-        WHERE latest.source = 'probe'
-        GROUP BY latest.machine_id
-        UNION
-        SELECT MAX(successful.id)
-        FROM probe_results successful
-        JOIN (
-          SELECT machine_id, MAX(checked_at) AS checked_at
-          FROM probe_results WHERE source = 'probe' AND ssh_ok = 1
-          GROUP BY machine_id
-        ) newest ON newest.machine_id = successful.machine_id AND newest.checked_at = successful.checked_at
-        WHERE successful.source = 'probe' AND successful.ssh_ok = 1
-        GROUP BY successful.machine_id
-      `;
       db.exec("CREATE TEMP TABLE IF NOT EXISTS _gpucheck_keep_probe_results (id INTEGER PRIMARY KEY)");
       db.prepare("DELETE FROM temp._gpucheck_keep_probe_results").run();
-      db.prepare(`INSERT INTO temp._gpucheck_keep_probe_results (id) ${keepLatest}`).run();
+      const machineIds = db.prepare("SELECT id FROM machines").all() as Array<{ id: number }>;
+      const latestProbe = db.prepare(`
+        SELECT id FROM probe_results
+        WHERE machine_id = ? AND source = 'probe'
+        ORDER BY checked_at DESC, id DESC
+        LIMIT 1
+      `);
+      const latestSuccessfulProbe = db.prepare(`
+        SELECT id FROM probe_results
+        WHERE machine_id = ? AND source = 'probe' AND ssh_ok = 1
+        ORDER BY checked_at DESC, id DESC
+        LIMIT 1
+      `);
+      const keepProbe = db.prepare("INSERT OR IGNORE INTO temp._gpucheck_keep_probe_results (id) VALUES (?)");
+      for (const { id: machineId } of machineIds) {
+        const latest = latestProbe.get(machineId) as { id: number } | undefined;
+        const lastSuccessful = latestSuccessfulProbe.get(machineId) as { id: number } | undefined;
+        if (latest) keepProbe.run(latest.id);
+        if (lastSuccessful) keepProbe.run(lastSuccessful.id);
+      }
       // Agent samples age out on their own (usually shorter) clock; no
       // keep-latest applies to them since the probe row carries current state.
       deleted += db.prepare(`DELETE FROM gpu_processes WHERE probe_result_id IN (SELECT id FROM probe_results WHERE source = 'agent' AND checked_at < ?)`).run(agentCutoffIso).changes;
