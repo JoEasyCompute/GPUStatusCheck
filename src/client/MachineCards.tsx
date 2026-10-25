@@ -164,10 +164,6 @@ function MachineCard({
         <div><dt>Power</dt><dd>{snapshot?.gpuPowerW ? `${snapshot.gpuPowerW} W` : "-"}</dd></div>
         <div><dt>Temp</dt><dd>{snapshot?.gpuAvgTempC ? `${snapshot.gpuAvgTempC} °C` : "-"}</dd></div>
         <div className="card-checked"><dt>Checked</dt><dd>{formatTime(latest?.checkedAt)}</dd></div>
-        <div><dt>Last contact</dt><dd>{formatTime(machine.lastSuccessful?.checkedAt)}</dd></div>
-        {latest?.sshOk === false && machine.lastSuccessful ? (
-          <div><dt>Last status</dt><dd>{formatStatus(machine.lastSuccessful.status)}</dd></div>
-        ) : null}
       </dl>
       {latest?.sshOk === false && machine.lastSuccessful ? <span className="chip">Showing last successful snapshot</span> : null}
     </div>
