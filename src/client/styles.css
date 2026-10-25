@@ -1343,13 +1343,12 @@ dd {
 
 .maintenance-toggle {
   font-size: 12px;
-  margin-left: auto;
   min-height: 28px;
   padding: 0 10px;
 }
 
 .modal-head .modal-close {
-  margin-left: 0;
+  margin-left: auto;
 }
 
 .chart-reset {
