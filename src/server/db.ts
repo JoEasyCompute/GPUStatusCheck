@@ -1300,31 +1300,38 @@ export function createDatabase(dbPath: string) {
       // Agent backfill rows are excluded because they are historical samples,
       // not live contact.
       const keepLatest = `
-        SELECT latest.id FROM probe_results latest
+        SELECT MAX(latest.id)
+        FROM probe_results latest
+        JOIN (
+          SELECT machine_id, MAX(checked_at) AS checked_at
+          FROM probe_results WHERE source = 'probe'
+          GROUP BY machine_id
+        ) newest ON newest.machine_id = latest.machine_id AND newest.checked_at = latest.checked_at
         WHERE latest.source = 'probe'
-          AND latest.id = (
-            SELECT candidate.id FROM probe_results candidate
-            WHERE candidate.machine_id = latest.machine_id AND candidate.source = 'probe'
-            ORDER BY candidate.checked_at DESC, candidate.id DESC LIMIT 1
-          )
+        GROUP BY latest.machine_id
         UNION
-        SELECT successful.id FROM probe_results successful
+        SELECT MAX(successful.id)
+        FROM probe_results successful
+        JOIN (
+          SELECT machine_id, MAX(checked_at) AS checked_at
+          FROM probe_results WHERE source = 'probe' AND ssh_ok = 1
+          GROUP BY machine_id
+        ) newest ON newest.machine_id = successful.machine_id AND newest.checked_at = successful.checked_at
         WHERE successful.source = 'probe' AND successful.ssh_ok = 1
-          AND successful.id = (
-            SELECT candidate.id FROM probe_results candidate
-            WHERE candidate.machine_id = successful.machine_id
-              AND candidate.source = 'probe' AND candidate.ssh_ok = 1
-            ORDER BY candidate.checked_at DESC, candidate.id DESC LIMIT 1
-          )
+        GROUP BY successful.machine_id
       `;
+      db.exec("CREATE TEMP TABLE IF NOT EXISTS _gpucheck_keep_probe_results (id INTEGER PRIMARY KEY)");
+      db.prepare("DELETE FROM temp._gpucheck_keep_probe_results").run();
+      db.prepare(`INSERT INTO temp._gpucheck_keep_probe_results (id) ${keepLatest}`).run();
       // Agent samples age out on their own (usually shorter) clock; no
       // keep-latest applies to them since the probe row carries current state.
       deleted += db.prepare(`DELETE FROM gpu_processes WHERE probe_result_id IN (SELECT id FROM probe_results WHERE source = 'agent' AND checked_at < ?)`).run(agentCutoffIso).changes;
       deleted += db.prepare(`DELETE FROM gpu_metrics WHERE probe_result_id IN (SELECT id FROM probe_results WHERE source = 'agent' AND checked_at < ?)`).run(agentCutoffIso).changes;
       deleted += db.prepare(`DELETE FROM probe_results WHERE source = 'agent' AND checked_at < ?`).run(agentCutoffIso).changes;
-      deleted += db.prepare(`DELETE FROM gpu_processes WHERE checked_at < ? AND probe_result_id NOT IN (${keepLatest})`).run(cutoffIso).changes;
-      deleted += db.prepare(`DELETE FROM gpu_metrics WHERE checked_at < ? AND probe_result_id NOT IN (${keepLatest})`).run(cutoffIso).changes;
-      deleted += db.prepare(`DELETE FROM probe_results WHERE checked_at < ? AND id NOT IN (${keepLatest})`).run(cutoffIso).changes;
+      deleted += db.prepare(`DELETE FROM gpu_processes WHERE checked_at < ? AND probe_result_id NOT IN (SELECT id FROM temp._gpucheck_keep_probe_results)`).run(cutoffIso).changes;
+      deleted += db.prepare(`DELETE FROM gpu_metrics WHERE checked_at < ? AND probe_result_id NOT IN (SELECT id FROM temp._gpucheck_keep_probe_results)`).run(cutoffIso).changes;
+      deleted += db.prepare(`DELETE FROM probe_results WHERE checked_at < ? AND id NOT IN (SELECT id FROM temp._gpucheck_keep_probe_results)`).run(cutoffIso).changes;
+      db.prepare("DELETE FROM temp._gpucheck_keep_probe_results").run();
       // Emptied runs (incl. synthetic agent ingest runs) fall out once aged.
       deleted += db.prepare("DELETE FROM poll_runs WHERE started_at < ? AND id NOT IN (SELECT DISTINCT poll_run_id FROM probe_results)").run(cutoffIso).changes;
       deleted += db.prepare("DELETE FROM gpu_down_events WHERE recovered_at IS NOT NULL AND recovered_at < ?").run(cutoffIso).changes;
