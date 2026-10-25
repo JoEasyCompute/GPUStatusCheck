@@ -62,7 +62,7 @@ export async function runAgentAction(
     const check = await runSsh(
       target,
       config,
-      "sudo -n true 2>/dev/null && echo SUDO_OK; cat /var/lib/gpucheck-agent/VERSION 2>/dev/null",
+      "sudo -n true 2>/dev/null && echo SUDO_OK; if [ -r /var/lib/gpucheck-agent/VERSION ]; then cat /var/lib/gpucheck-agent/VERSION; fi",
       "",
       30_000,
       runCommand,

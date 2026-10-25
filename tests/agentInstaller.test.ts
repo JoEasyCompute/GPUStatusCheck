@@ -22,6 +22,30 @@ const config: InstallerConfig = {
 };
 
 describe("agent installer", () => {
+  it("installs a fresh agent when the VERSION file does not exist yet", async () => {
+    const calls: Array<{ args: string[]; input: string }> = [];
+    const run: RunInstallerCommand = async (_command, args, input) => {
+      calls.push({ args, input });
+      const remote = args.at(-1) ?? "";
+      if (remote.includes("/var/lib/gpucheck-agent/VERSION")) {
+        const handlesMissingVersion = remote.includes("if [ -r /var/lib/gpucheck-agent/VERSION ]");
+        return {
+          code: handlesMissingVersion ? 0 : 1,
+          stdout: "SUDO_OK\n",
+          stderr: handlesMissingVersion ? "" : "cat: /var/lib/gpucheck-agent/VERSION: No such file or directory",
+        };
+      }
+      return { code: 0, stdout: "active\n", stderr: "" };
+    };
+
+    const result = await runAgentAction(target, "install", config, run);
+
+    expect(result).toMatchObject({ outcome: "succeeded", summary: "installed v0.1.0" });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.args.at(-1)).toContain("if [ -r /var/lib/gpucheck-agent/VERSION ]");
+    expect(calls[1]?.input).toContain("systemctl enable --now gpucheck-agent.timer");
+  });
+
   it("installs the bundled agent with fixed SSH arguments and payload", async () => {
     const fake = commandSequence([
       { code: 0, stdout: "SUDO_OK\n", stderr: "" },
@@ -38,7 +62,7 @@ describe("agent installer", () => {
           "-i", "/keys/gpu", "-p", "2222", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
           "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=1", "-o", "StrictHostKeyChecking=accept-new",
           "ops@10.0.0.1",
-          "sudo -n true 2>/dev/null && echo SUDO_OK; cat /var/lib/gpucheck-agent/VERSION 2>/dev/null",
+          "sudo -n true 2>/dev/null && echo SUDO_OK; if [ -r /var/lib/gpucheck-agent/VERSION ]; then cat /var/lib/gpucheck-agent/VERSION; fi",
         ],
         timeoutMs: 30_000,
       },
