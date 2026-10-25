@@ -61,7 +61,7 @@ export function loadConfig(env = process.env): AppConfig {
     minFreeDiskBytes: numberEnv(value("GPUCHECK_MIN_FREE_DISK_BYTES"), 5 * 1024 ** 3),
     adminApiKey: value("GPUCHECK_ADMIN_API_KEY") || "",
     agentInstallJobs: numberEnv(value("GPUCHECK_AGENT_INSTALL_JOBS"), 4),
-    agentMaxBatch: numberEnv(value("GPUCHECK_AGENT_MAX_BATCH"), 100),
+    agentMaxBatch: numberEnv(value("GPUCHECK_AGENT_MAX_BATCH"), 250),
     agentOperationRetentionDays: numberEnv(value("GPUCHECK_AGENT_OPERATION_RETENTION_DAYS"), 30),
     agentOutputMaxChars: numberEnv(value("GPUCHECK_AGENT_OUTPUT_MAX_CHARS"), 4000),
     telegramBotToken: value("TELEGRAM_BOT_TOKEN") || "",

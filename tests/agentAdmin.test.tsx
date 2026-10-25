@@ -5,17 +5,18 @@ import { AgentOperationDrawer } from "../src/client/AgentOperationDrawer";
 import {
   agentPresence,
   eligibleRetryMachineIds,
+  installedAgentMachineIds,
   selectVisibleMachines,
   toggleMachineSelection,
 } from "../src/client/agentAdmin";
 import type { AgentOperationDetail, MachineWithLatest, ProbeResult } from "../src/shared/types";
 
 describe("agent administration UI helpers", () => {
-  it("toggles only the requested machine and normalizes duplicate visible selection", () => {
+  it("toggles only the requested machine and selects exactly the visible machines", () => {
     expect(toggleMachineSelection([1, 2], 2)).toEqual([1]);
     expect(toggleMachineSelection([1, 2], 3)).toEqual([1, 2, 3]);
-    expect(selectVisibleMachines([1], [machine(2), machine(2), machine(3)])).toEqual([1, 2, 3]);
-    expect(selectVisibleMachines([], [])).toEqual([]);
+    expect(selectVisibleMachines([machine(2), machine(2), machine(3)])).toEqual([2, 3]);
+    expect(selectVisibleMachines([])).toEqual([]);
   });
 
   it("does not mutate selection when the visible machine list changes", () => {
@@ -33,8 +34,20 @@ describe("agent administration UI helpers", () => {
   it("distinguishes installed, absent, and unknown agent presence", () => {
     expect(agentPresence(machine(1, { sshOk: true, agentVersion: "0.1.0" }))).toBe("installed");
     expect(agentPresence(machine(2, { sshOk: true, agentVersion: "" }))).toBe("absent");
-    expect(agentPresence(machine(3, { sshOk: false }))).toBe("unknown");
+    expect(agentPresence({ ...machine(3, { sshOk: false }), lastSuccessful: { name: "m3", ip: "10.0.0.3", sshOk: true, status: "ok", agentVersion: "0.1.0" } })).toBe("installed");
+    expect(agentPresence(machine(4, { sshOk: false }))).toBe("unknown");
     expect(agentPresence(machine(4))).toBe("unknown");
+  });
+
+  it("finds every active installed agent for a bulk upgrade", () => {
+    const installed = machine(1, { sshOk: true, agentVersion: "0.1.0" });
+    const unreachableInstalled = {
+      ...machine(2, { sshOk: false }),
+      lastSuccessful: { name: "beta", ip: "10.0.0.2", sshOk: true, status: "ok" as const, agentVersion: "0.1.0" },
+    };
+    const absent = machine(3, { sshOk: true, agentVersion: "" });
+    const inactive = { ...machine(4, { sshOk: true, agentVersion: "0.1.0" }), active: false };
+    expect(installedAgentMachineIds([installed, unreachableInstalled, absent, inactive])).toEqual([1, 2]);
   });
 
   it("renders exact install and uninstall confirmations without credential material", () => {

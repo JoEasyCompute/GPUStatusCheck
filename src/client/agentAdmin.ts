@@ -4,8 +4,8 @@ export function toggleMachineSelection(selected: number[], machineId: number): n
   return selected.includes(machineId) ? selected.filter((id) => id !== machineId) : [...selected, machineId];
 }
 
-export function selectVisibleMachines(selected: number[], machines: MachineWithLatest[]): number[] {
-  const next = new Set(selected);
+export function selectVisibleMachines(machines: MachineWithLatest[]): number[] {
+  const next = new Set<number>();
   for (const machine of machines) {
     if (machine.active !== false && machine.id !== undefined) next.add(machine.id);
   }
@@ -19,6 +19,13 @@ export function eligibleRetryMachineIds(operation: AgentOperationDetail): number
 }
 
 export function agentPresence(machine: MachineWithLatest): "installed" | "absent" | "unknown" {
-  if (machine.latest?.agentVersion) return "installed";
+  const latest = machine.latest?.sshOk === false ? machine.lastSuccessful ?? machine.latest : machine.latest;
+  if (latest?.agentVersion) return "installed";
   return machine.latest?.sshOk === true ? "absent" : "unknown";
+}
+
+export function installedAgentMachineIds(machines: MachineWithLatest[]): number[] {
+  return machines
+    .filter((machine) => machine.active !== false && machine.id !== undefined && agentPresence(machine) === "installed")
+    .map((machine) => machine.id!);
 }

@@ -291,20 +291,23 @@ is never written to SQLite or persistent `localStorage`.
 able to observe the network can capture it. Keep the warning visible and rotate
 the key after nginx HTTPS termination is enabled.
 
-Agent operations target explicitly selected active inventory machines only.
-Install is idempotent and upgrades older agents to the bundled version;
-uninstall requires a separate confirmation and removes the timer, scripts, and
-buffered spool. Jobs run asynchronously with bounded concurrency. Hosts without
-passwordless `sudo` are skipped, other machine failures do not stop the batch,
-and progress/history survive tab closure. A server restart marks ambiguous
-queued/running items interrupted instead of retrying them automatically.
+Agent operations target active inventory machines only. The Admin toolbar's
+**Upgrade installed agents** button upgrades every active machine whose latest
+probe detected an agent. The status filter also includes **OK and Degraded**;
+**Select visible** selects exactly the rows currently shown so they can be
+installed/upgraded or uninstalled together. Install is idempotent and
+uninstall requires a separate confirmation; jobs run asynchronously with
+bounded concurrency. Hosts without passwordless `sudo` are skipped, other
+machine failures do not stop the batch, and progress/history survive tab
+closure. A server restart marks ambiguous queued/running items interrupted
+instead of retrying them automatically.
 
 Settings:
 
 ```bash
 GPUCHECK_ADMIN_API_KEY=
 GPUCHECK_AGENT_INSTALL_JOBS=4
-GPUCHECK_AGENT_MAX_BATCH=100
+GPUCHECK_AGENT_MAX_BATCH=250
 GPUCHECK_AGENT_OPERATION_RETENTION_DAYS=30
 GPUCHECK_AGENT_OUTPUT_MAX_CHARS=4000
 ```

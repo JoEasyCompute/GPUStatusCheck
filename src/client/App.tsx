@@ -4,7 +4,7 @@ import type { AdminStatus, AgentAction, AgentOperation, AgentOperationDetail, Ed
 import { AdminAccess } from "./AdminAccess";
 import { AgentOperationDialog } from "./AgentOperationDialog";
 import { AgentOperationDrawer } from "./AgentOperationDrawer";
-import { selectVisibleMachines, toggleMachineSelection } from "./agentAdmin";
+import { installedAgentMachineIds, selectVisibleMachines, toggleMachineSelection } from "./agentAdmin";
 import { adminSessionReducer, clearAdminKey, initialAdminSessionState, loadAdminKey, saveAdminKey } from "./adminSession";
 import { ApiError, fetchAdminJson, fetchJson, fetchJsonArray } from "./api";
 import { copyText } from "./clipboard";
@@ -15,9 +15,9 @@ import { MachineCards } from "./MachineCards";
 import type { MachineGroupBy } from "./machineGroups";
 import { MachineDetailModal } from "./MachineDetailModal";
 import { MachineTable } from "./MachineTable";
+import { matchesMachineStatusFilter, type MachineStatusFilter } from "./machineFilters";
 import { formatElapsed, formatTime } from "./formatters";
 
-type StatusFilter = "all" | "not_ok" | "ok" | "degraded" | "ssh_failed";
 type ViewMode = "table" | "cards" | "gpus";
 
 function storedChoice<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
@@ -65,7 +65,7 @@ export function App() {
   const [selectedMachineId, setSelectedMachineId] = useState<number | undefined>();
   const [history, setHistory] = useState<ProbeResult[]>([]);
   const [processes, setProcesses] = useState<GpuProcess[]>([]);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [statusFilter, setStatusFilter] = useState<MachineStatusFilter>("all");
   const [gpuTypeFilter, setGpuTypeFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>(() => storedChoice("gpucheck.viewMode", ["table", "cards", "gpus"], "table"));
@@ -133,13 +133,13 @@ export function App() {
   }
 
   function selectVisibleForAgents() {
-    dispatchAdmin({ type: "selection", machineIds: selectVisibleMachines(admin.selectedMachineIds, filteredMachines) });
+    dispatchAdmin({ type: "selection", machineIds: selectVisibleMachines(filteredMachines) });
   }
 
-  async function submitAgentOperation() {
+  async function startAgentOperation(action: AgentAction, requestedMachineIds: number[]) {
     if (admin.mode !== "unlocked") return;
     const activeIds = new Set(machines.filter((machine) => machine.active !== false).map((machine) => machine.id));
-    const machineIds = [...new Set(admin.selectedMachineIds)].filter((id) => activeIds.has(id));
+    const machineIds = [...new Set(requestedMachineIds)].filter((id) => activeIds.has(id));
     if (machineIds.length === 0) {
       setError("Select at least one active machine");
       return;
@@ -149,7 +149,7 @@ export function App() {
       const operation = await fetchAdminJson<AgentOperationDetail>(admin.key, "/api/agent-operations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: agentAction, machineIds }),
+        body: JSON.stringify({ action, machineIds }),
       });
       setAgentOperation(operation);
       dispatchAdmin({ type: "lastOperation", operation });
@@ -161,6 +161,14 @@ export function App() {
     } finally {
       setSubmittingAgentOperation(false);
     }
+  }
+
+  function submitAgentOperation() {
+    return startAgentOperation(agentAction, admin.selectedMachineIds);
+  }
+
+  function upgradeInstalledAgents() {
+    return startAgentOperation("install", installedAgentIds);
   }
 
   async function openRecentAgentOperation() {
@@ -392,9 +400,7 @@ export function App() {
   const filteredMachines = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return machines.filter((machine) => {
-      const status = machine.latest?.status ?? "unknown";
-      const statusMatches = statusFilter === "all"
-        || (statusFilter === "not_ok" ? status !== "ok" : status === statusFilter);
+      const statusMatches = matchesMachineStatusFilter(machine.latest?.status, statusFilter);
       const gpuTypeMatches = gpuTypeFilter === "all" || (machine.latest?.gpuType ?? "") === gpuTypeFilter;
       const searchMatches = !needle || [machine.name, machine.ip, machine.platform, machine.owner, machine.location]
         .filter(Boolean)
@@ -416,6 +422,7 @@ export function App() {
 
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId);
   const selectedAgentMachines = machines.filter((machine) => machine.id !== undefined && admin.selectedMachineIds.includes(machine.id));
+  const installedAgentIds = useMemo(() => installedAgentMachineIds(machines), [machines]);
 
   return (
     <main>
@@ -523,9 +530,10 @@ export function App() {
 
       <section className="toolbar">
         <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, IP, platform, owner, location" />
-        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
+        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as MachineStatusFilter)}>
           <option value="all">All statuses</option>
           <option value="not_ok">Not OK</option>
+          <option value="ok_degraded">OK and Degraded</option>
           <option value="ok">OK</option>
           <option value="degraded">Degraded</option>
           <option value="ssh_failed">SSH failed</option>
@@ -587,6 +595,9 @@ export function App() {
         ) : null}
         {admin.mode === "unlocked" ? (
           <div className="agent-admin-actions">
+            <button className="primary" onClick={() => void upgradeInstalledAgents()} disabled={submittingAgentOperation || installedAgentIds.length === 0}>
+              Upgrade installed agents ({installedAgentIds.length})
+            </button>
             {viewMode !== "gpus" ? <button onClick={selectVisibleForAgents}>Select visible</button> : null}
             <button onClick={() => dispatchAdmin({ type: "selection", machineIds: [] })} disabled={admin.selectedMachineIds.length === 0}>Clear selection</button>
             <button className="primary" onClick={() => setAgentDialogOpen(true)} disabled={admin.selectedMachineIds.length === 0}>

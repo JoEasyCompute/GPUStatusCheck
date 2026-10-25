@@ -12,4 +12,10 @@ describe("configuration", () => {
     expect(loadConfig({ GPUCHECK_ENV_FILE: envPath, GPUCHECK_SSH_FAILURE_REMINDER_HOURS: "12" }).sshFailureReminderHours).toBe(12);
     expect(loadConfig({ GPUCHECK_ENV_FILE: envPath, GPUCHECK_SSH_FAILURE_REMINDER_HOURS: "-1" }).sshFailureReminderHours).toBe(0);
   });
+
+  it("allows selecting the full fleet for a bounded agent operation", () => {
+    const envPath = join(mkdtempSync(join(tmpdir(), "gpu-config-agent-batch-")), "missing.env");
+    expect(loadConfig({ GPUCHECK_ENV_FILE: envPath }).agentMaxBatch).toBe(250);
+    expect(loadConfig({ GPUCHECK_ENV_FILE: envPath, GPUCHECK_AGENT_MAX_BATCH: "174" }).agentMaxBatch).toBe(174);
+  });
 });
