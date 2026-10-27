@@ -1243,6 +1243,25 @@ dd {
   color: var(--accent);
 }
 
+.network-interface-scroll {
+  margin-top: 10px;
+  overflow-x: auto;
+}
+
+.network-interface-table {
+  font-size: 12px;
+  min-width: 680px;
+}
+
+.network-interface-table th,
+.network-interface-table td {
+  padding: 7px 9px;
+}
+
+.interface-mac {
+  font-family: var(--font-mono);
+}
+
 /* ---------- charts ---------- */
 
 .power-charts {

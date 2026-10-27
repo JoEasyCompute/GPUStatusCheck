@@ -4,6 +4,7 @@ import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
 import { GpuCharts } from "./PowerCharts";
 import { fetchJsonArray } from "./api";
+import { NetworkInterfacesSection } from "./NetworkInterfacesSection";
 
 export function MachineDetailModal({
   machine,
@@ -112,6 +113,7 @@ function DetailPane({ machine, history, processes, onSelectGpu }: { machine: Mac
         ) : null}
         <div><dt>Notes</dt><dd>{formatMachineNotes(machine)}</dd></div>
       </dl>
+      <NetworkInterfacesSection snapshots={machine.networkInterfaceSnapshots ?? []} />
       {current?.sshOk === false && machine.lastSuccessful ? (
         <p className="empty-chart">
           SSH failed at {formatTime(current.checkedAt)}. Showing the {formatStatus(machine.lastSuccessful.status).toLowerCase()} snapshot last seen at {formatTime(machine.lastSuccessful.checkedAt)}.

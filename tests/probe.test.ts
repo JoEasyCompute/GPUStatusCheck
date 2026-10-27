@@ -24,6 +24,10 @@ describe("probe parsing", () => {
         "DISK_TOTAL_KB=1843200000",
         "DISK_USED_PCT=67",
         "BUS_OFF=0",
+        "NETWORK_INTERFACES<<__GPUCHECK_EOF__",
+        "ens3|52:54:00:12:34:56|10.0.0.5/24,fd00::5/64|up",
+        "ib0|00:11:22:33:44:55||down",
+        "__GPUCHECK_EOF__",
         "GPU_METRICS<<__GPUCHECK_EOF__",
         "0, 00000000:65:00.0, 91, 42, 67, 312.5, 450.0, 2520, 10501, GPU-aaaa1111-2222-3333-4444-555566667777",
         "1, 00000000:B3:00.0, 0, 0, 51, 48.2, 450.0, 210, 405, GPU-bbbb1111-2222-3333-4444-555566667777",
@@ -56,6 +60,10 @@ describe("probe parsing", () => {
     expect(parsed.memUsedPct).toBe(31.4);
     expect(parsed.diskTotalKb).toBe(1843200000);
     expect(parsed.diskUsedPct).toBe(67);
+    expect(parsed.networkInterfaces).toEqual([
+      { name: "ens3", macAddress: "52:54:00:12:34:56", ipAddresses: ["10.0.0.5/24", "fd00::5/64"], state: "up" },
+      { name: "ib0", macAddress: "00:11:22:33:44:55", ipAddresses: [], state: "down" },
+    ]);
     expect(parsed.gpuMetrics).toEqual([
       { gpuIndex: 0, pciBusId: "00000000:65:00.0", gpuUtil: 91, memUtil: 42, tempC: 67, powerW: 312.5, powerLimitW: 450, graphicsClockMhz: 2520, memoryClockMhz: 10501, uuid: "GPU-aaaa1111-2222-3333-4444-555566667777" },
       { gpuIndex: 1, pciBusId: "00000000:B3:00.0", gpuUtil: 0, memUtil: 0, tempC: 51, powerW: 48.2, powerLimitW: 450, graphicsClockMhz: 210, memoryClockMhz: 405, uuid: "GPU-bbbb1111-2222-3333-4444-555566667777" },
@@ -68,6 +76,11 @@ describe("probe parsing", () => {
       processName: "python",
       commandLine: "python train.py --batch 32",
     });
+  });
+
+  it("leaves interface data undefined for older agent payloads", () => {
+    const parsed = parseProbeOutput("REMOTE_HOST=alpha\n", 512);
+    expect(parsed.networkInterfaces).toBeUndefined();
   });
 
   it("enriches pmon processes with ps command lines and truncates long args", () => {

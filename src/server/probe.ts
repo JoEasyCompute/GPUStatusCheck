@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { GpuMetric, GpuProcess, Machine, ProbeResult } from "../shared/types";
+import type { GpuMetric, GpuProcess, Machine, NetworkInterface, ProbeResult } from "../shared/types";
 
 const BLOCK_END = "__GPUCHECK_EOF__";
 
@@ -33,6 +33,7 @@ export type ParsedProbe = {
   kernelHits: string;
   processes: GpuProcess[];
   gpuMetrics: GpuMetric[];
+  networkInterfaces?: NetworkInterface[];
 };
 
 export type RunProbeOptions = {
@@ -79,7 +80,23 @@ export function parseProbeOutput(stdout: string, processArgsMaxChars: number): P
     kernelHits,
     processes: parseGpuProcesses(block(stdout, "PMON_OUTPUT"), block(stdout, "PS_OUTPUT"), processArgsMaxChars),
     gpuMetrics: parseGpuMetrics(block(stdout, "GPU_METRICS")),
+    networkInterfaces: stdout.includes("NETWORK_INTERFACES<<")
+      ? parseNetworkInterfaces(block(stdout, "NETWORK_INTERFACES"))
+      : undefined,
   };
+}
+
+export function parseNetworkInterfaces(output: string): NetworkInterface[] {
+  return output.split(/\r?\n/).flatMap((line) => {
+    const [name, macAddress, addresses, state] = line.split("|");
+    if (!name?.trim()) return [];
+    return [{
+      name: name.trim(),
+      macAddress: macAddress?.trim().toLowerCase() ?? "",
+      ipAddresses: addresses?.split(",").map((address) => address.trim()).filter(Boolean) ?? [],
+      state: state?.trim() ?? "unknown",
+    }];
+  });
 }
 
 function normalizeGpuJobs(gpuJobs: string, gpuCount: number | null, busOffSuspected: boolean): string {

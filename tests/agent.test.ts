@@ -34,6 +34,9 @@ function sampleText(options: { gpuUtil?: number; powerW?: number; rc?: number; k
     "DISK_USED_PCT=33",
     "AGENT_VERSION=0.1.0",
     "BUS_OFF=0",
+    "NETWORK_INTERFACES<<__GPUCHECK_EOF__",
+    "ens3|52:54:00:12:34:56|10.0.0.5/24|up",
+    "__GPUCHECK_EOF__",
     "GPU_METRICS<<__GPUCHECK_EOF__",
     `0, 00000000:01:00.0, ${gpuUtil}, 10, 55, ${powerW}, 450, 2000, 10000, ${UUID_A}`,
     `1, 00000000:02:00.0, ${gpuUtil}, 10, 56, ${powerW}, 450, 2000, 10000, ${UUID_B}`,
@@ -113,6 +116,12 @@ describe("parseDrainOutput", () => {
 describe("ingestDrainBatch", () => {
   it("preserves historical timestamps and never touches identity or drop tables", () => {
     const { db, machine } = makeDb();
+    const probeRun = db.createPollRun(1);
+    db.insertProbeResult(probeRun, machine.id!, {
+      name: "alpha", ip: "10.0.0.1", sshOk: true, status: "ok",
+      networkInterfaces: [{ name: "ens3", macAddress: "52:54:00:12:34:56", ipAddresses: ["10.0.0.5/24"], state: "up" }],
+    });
+    db.finishPollRun(probeRun);
     const before = {
       gpus: db.raw.prepare("SELECT COUNT(*) AS n FROM gpus").get(),
       sightings: db.raw.prepare("SELECT COUNT(*) AS n FROM gpu_sightings").get(),
@@ -134,6 +143,10 @@ describe("ingestDrainBatch", () => {
     expect(row.checked_at).toBe(ts);
     expect(row.source).toBe("agent");
     expect(row.status).toBe("ok");
+    expect(db.listMachines()[0]?.networkInterfaceSnapshots).toEqual([
+      { source: "agent", observedAt: ts, interfaces: [{ name: "ens3", macAddress: "52:54:00:12:34:56", ipAddresses: ["10.0.0.5/24"], state: "up" }] },
+      expect.objectContaining({ source: "probe", interfaces: [expect.objectContaining({ name: "ens3", ipAddresses: ["10.0.0.5/24"] })] }),
+    ]);
     const metrics = db.raw.prepare("SELECT COUNT(*) AS n FROM gpu_metrics WHERE machine_id = ? AND checked_at = ?").get(machine.id, ts) as { n: number };
     expect(metrics.n).toBe(2);
 
@@ -144,7 +157,7 @@ describe("ingestDrainBatch", () => {
 
     const run = db.raw.prepare("SELECT status FROM poll_runs ORDER BY id DESC LIMIT 1").get() as { status: string };
     expect(run.status).toBe("agent");
-    expect(db.listPollRuns()).toHaveLength(0);
+    expect(db.listPollRuns().map((entry) => entry.status)).toEqual(["complete"]);
   });
 
   it("is idempotent under re-drains and rejects future timestamps", () => {

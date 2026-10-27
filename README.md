@@ -424,6 +424,14 @@ The machine modal also shows the agent version, last sample ingested, last
 successful drain, and latest agent note so a stalled spool is distinguishable
 from an agent that is still reporting.
 
+The SSH probe and agent also report each matched network interface's name,
+current MAC address, assigned IP addresses, and link state. The modal keeps the
+latest snapshot from each source separately, so agent data remains available
+during SSH outages. For NATed hosts, these are addresses assigned inside the
+machine; they do not reveal the public NAT address or identify the host across
+the NAT boundary. Agent upgrades to version 0.1.2 are needed to collect this
+data from already-installed agents.
+
 Install / upgrade / remove (needs passwordless sudo on the host; hosts
 without it are skipped and stay SSH-poll-only):
 

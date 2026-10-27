@@ -5,6 +5,37 @@ import { join } from "node:path";
 import { createDatabase } from "../src/server/db";
 
 describe("database", () => {
+  it("replaces the latest live network-interface snapshot when interfaces change", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-network-interfaces-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+    const machine = db.upsertMachine({ name: "alpha", ip: "10.0.0.1" });
+    const firstRun = db.createPollRun(1);
+    db.insertProbeResult(firstRun, machine.id!, {
+      name: "alpha", ip: "10.0.0.1", sshOk: true, status: "ok",
+      networkInterfaces: [
+        { name: "ens3", macAddress: "52:54:00:12:34:56", ipAddresses: ["10.0.0.5/24"], state: "up" },
+        { name: "eth1", macAddress: "aa:bb:cc:dd:ee:ff", ipAddresses: [], state: "down" },
+      ],
+    });
+    const first = db.listMachines()[0]?.networkInterfaceSnapshots;
+    expect(first).toHaveLength(1);
+    expect(first?.[0]).toMatchObject({ source: "probe", interfaces: expect.arrayContaining([
+      expect.objectContaining({ name: "ens3", macAddress: "52:54:00:12:34:56" }),
+      expect.objectContaining({ name: "eth1", state: "down" }),
+    ]) });
+
+    const secondRun = db.createPollRun(1);
+    db.insertProbeResult(secondRun, machine.id!, {
+      name: "alpha", ip: "10.0.0.1", sshOk: true, status: "ok",
+      networkInterfaces: [{ name: "ens3", macAddress: "52:54:00:12:34:57", ipAddresses: ["10.0.0.6/24"], state: "up" }],
+    });
+    expect(db.listMachines()[0]?.networkInterfaceSnapshots).toEqual([
+      expect.objectContaining({ source: "probe", interfaces: [expect.objectContaining({ name: "ens3", macAddress: "52:54:00:12:34:57", ipAddresses: ["10.0.0.6/24"] })] }),
+    ]);
+    db.close();
+  });
+
   it("creates agent operations transactionally and prevents active machine overlap", () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-db-agent-operation-create-"));
     const db = createDatabase(join(dir, "test.sqlite"));

@@ -148,6 +148,30 @@ if [ -n "$cpu_sample1" ] && [ -n "$cpu_sample2" ]; then
         }')
 fi
 
+# Interface identity follows the same interface-name filter used for the
+# aggregate network rates above, so each row explains which links contribute.
+network_interfaces=""
+for iface_path in /sys/class/net/*; do
+    [ -d "$iface_path" ] || continue
+    iface=${iface_path##*/}
+    case "$iface" in en*|eth*|ib*|wl*) ;; *) continue ;; esac
+    mac_address=$(cat "$iface_path/address" 2>/dev/null) || mac_address=""
+    [ -n "$mac_address" ] || continue
+    iface_state=$(cat "$iface_path/operstate" 2>/dev/null) || iface_state="unknown"
+    iface_addresses=""
+    if command -v ip >/dev/null 2>&1; then
+        iface_addresses=$(ip -o addr show dev "$iface" 2>/dev/null | awk '{
+            if ($4 != "") {
+                if (addresses != "") addresses = addresses ","
+                addresses = addresses $4
+            }
+        } END { print addresses }') || iface_addresses=""
+    fi
+    interface_row="$iface|$mac_address|$iface_addresses|$iface_state"
+    if [ -n "$network_interfaces" ]; then network_interfaces="$network_interfaces
+$interface_row"; else network_interfaces=$interface_row; fi
+done
+
 cpu_model=""
 cpu_cores=""
 if [ -r /proc/cpuinfo ]; then
@@ -238,4 +262,7 @@ printf '%s\n' "$pmon_out"
 printf '\n__GPUCHECK_EOF__\n'
 printf 'PS_OUTPUT<<__GPUCHECK_EOF__\n'
 printf '%s\n' "$ps_out"
+printf '\n__GPUCHECK_EOF__\n'
+printf 'NETWORK_INTERFACES<<__GPUCHECK_EOF__\n'
+printf '%s\n' "$network_interfaces"
 printf '\n__GPUCHECK_EOF__\n'

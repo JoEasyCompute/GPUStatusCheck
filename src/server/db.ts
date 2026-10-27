@@ -18,6 +18,8 @@ import type {
   GroupHistoryPoint,
   Machine,
   MachineWithLatest,
+  NetworkInterface,
+  NetworkInterfaceSnapshot,
   PollRun,
   ProbeResult,
   SshFailureReminderState,
@@ -49,6 +51,7 @@ export type ParsedAgentSample = {
   nvidiaSmiError: string;
   processes: GpuProcess[];
   gpuMetrics: GpuMetric[];
+  networkInterfaces?: NetworkInterface[];
 };
 
 type Sqlite = Database.Database;
@@ -115,6 +118,15 @@ export function createDatabase(dbPath: string) {
         duration_ms INTEGER,
         FOREIGN KEY(machine_id) REFERENCES machines(id),
         FOREIGN KEY(poll_run_id) REFERENCES poll_runs(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS machine_network_snapshots (
+        machine_id INTEGER NOT NULL,
+        source TEXT NOT NULL CHECK(source IN ('probe', 'agent')),
+        interfaces_json TEXT NOT NULL DEFAULT '[]',
+        observed_at TEXT NOT NULL,
+        PRIMARY KEY(machine_id, source),
+        FOREIGN KEY(machine_id) REFERENCES machines(id) ON DELETE CASCADE
       );
 
       CREATE TABLE IF NOT EXISTS gpu_processes (
@@ -392,6 +404,24 @@ export function createDatabase(dbPath: string) {
     return Number(info.lastInsertRowid);
   }
 
+  function replaceMachineNetworkSnapshot(
+    machineId: number,
+    source: NetworkInterfaceSnapshot["source"],
+    observedAt: string,
+    interfaces: NetworkInterface[],
+  ): void {
+    const existing = db.prepare("SELECT observed_at FROM machine_network_snapshots WHERE machine_id = ? AND source = ?")
+      .get(machineId, source) as { observed_at: string } | undefined;
+    if (existing && Date.parse(existing.observed_at) > Date.parse(observedAt)) return;
+    db.prepare(`
+      INSERT INTO machine_network_snapshots (machine_id, source, interfaces_json, observed_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(machine_id, source) DO UPDATE SET
+        interfaces_json = excluded.interfaces_json,
+        observed_at = excluded.observed_at
+    `).run(machineId, source, JSON.stringify(interfaces), observedAt);
+  }
+
   function insertProbeResult(pollRunId: number, machineId: number, result: ProbeResult): number {
     const checkedAt = new Date().toISOString();
     const info = db.prepare(`
@@ -442,6 +472,9 @@ export function createDatabase(dbPath: string) {
       nvidiaSmiError: result.nvidiaSmiError ?? "",
       durationMs: result.durationMs ?? null,
     });
+    if (result.sshOk && result.networkInterfaces !== undefined) {
+      replaceMachineNetworkSnapshot(machineId, "probe", checkedAt, result.networkInterfaces);
+    }
     const probeResultId = Number(info.lastInsertRowid);
     const owner = (result.owner ?? "").trim();
     const uuidByIndex = new Map<number, string>();
@@ -509,6 +542,25 @@ export function createDatabase(dbPath: string) {
       ORDER BY m.name
     `).all() as LatestMachineRow[];
     const machines = rows.map((row) => rowToMachineWithLatest(row, db));
+    const networkRows = db.prepare(`
+      SELECT snapshots.* FROM machine_network_snapshots snapshots
+      JOIN machines machine ON machine.id = snapshots.machine_id
+      WHERE machine.active = 1
+      ORDER BY snapshots.machine_id, snapshots.source
+    `).all() as NetworkSnapshotRow[];
+    const snapshotsByMachine = new Map<number, NetworkInterfaceSnapshot[]>();
+    for (const row of networkRows) {
+      const snapshots = snapshotsByMachine.get(row.machine_id) ?? [];
+      snapshots.push({
+        source: row.source,
+        observedAt: row.observed_at,
+        interfaces: parseNetworkInterfacesJson(row.interfaces_json),
+      });
+      snapshotsByMachine.set(row.machine_id, snapshots);
+    }
+    for (const machine of machines) {
+      if (machine.id !== undefined) machine.networkInterfaceSnapshots = snapshotsByMachine.get(machine.id) ?? [];
+    }
     for (const machine of machines) {
       if (machine.id !== undefined) machine.agentState = getAgentState(machine.id);
     }
@@ -1067,6 +1119,9 @@ export function createDatabase(dbPath: string) {
     for (const metric of parsed.gpuMetrics) {
       insertMetricRow(db, pollRunId, machineId, probeResultId, checkedAt, metric);
     }
+    if (parsed.networkInterfaces !== undefined) {
+      replaceMachineNetworkSnapshot(machineId, "agent", checkedAt, parsed.networkInterfaces);
+    }
     return true;
   }
 
@@ -1461,6 +1516,27 @@ function parseNullableNumber(value: string | undefined): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
+function parseNetworkInterfacesJson(value: string): NetworkInterface[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((item): NetworkInterface[] => {
+      if (typeof item !== "object" || item === null) return [];
+      const row = item as Record<string, unknown>;
+      if (typeof row.name !== "string" || typeof row.macAddress !== "string" || typeof row.state !== "string"
+        || !Array.isArray(row.ipAddresses) || !row.ipAddresses.every((address: unknown) => typeof address === "string")) return [];
+      return [{
+        name: row.name,
+        macAddress: row.macAddress,
+        state: row.state,
+        ipAddresses: row.ipAddresses,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
 function ensureColumn(db: Sqlite, table: string, column: string, definition: string): void {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (!rows.some((row) => row.name === column)) {
@@ -1542,6 +1618,13 @@ type MachineRow = {
 };
 
 type LatestMachineRow = MachineRow & Partial<ProbeRow> & { latest_id: number | null };
+
+type NetworkSnapshotRow = {
+  machine_id: number;
+  source: "probe" | "agent";
+  interfaces_json: string;
+  observed_at: string;
+};
 
 type ProbeRow = {
   id: number;

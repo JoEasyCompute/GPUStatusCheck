@@ -15,6 +15,19 @@ export type Machine = {
   updatedAt?: string;
 };
 
+export type NetworkInterface = {
+  name: string;
+  macAddress: string;
+  ipAddresses: string[];
+  state: string;
+};
+
+export type NetworkInterfaceSnapshot = {
+  source: "probe" | "agent";
+  observedAt: string;
+  interfaces: NetworkInterface[];
+};
+
 export type FleetHistoryPoint = {
   pollRunId: number;
   startedAt: string;
@@ -163,6 +176,7 @@ export type ProbeResult = {
   durationMs?: number;
   processes?: GpuProcess[];
   gpuMetrics?: GpuMetric[];
+  networkInterfaces?: NetworkInterface[];
 };
 
 export type PollRun = {
@@ -287,6 +301,8 @@ export type MachineWithLatest = Machine & {
   lastSuccessful?: ProbeResult;
   /** Most recent agent spool ingestion state, when an agent has reported. */
   agentState?: AgentState;
+  /** Latest interface snapshots per source, retained even if SSH later fails. */
+  networkInterfaceSnapshots?: NetworkInterfaceSnapshot[];
   activeGpuNotes?: GpuDownNote[];
 };
 
