@@ -288,6 +288,7 @@ async function runProbeAs(machine: Machine, options: RunProbeOptions, user: stri
       durationMs: Date.now() - start,
       processes: parsed.processes,
       gpuMetrics: parsed.gpuMetrics,
+      networkInterfaces: parsed.networkInterfaces,
     };
   } catch (error) {
     return {

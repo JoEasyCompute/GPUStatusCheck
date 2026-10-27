@@ -1,8 +1,40 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import { buildRemoteScript, isAuthFailure, normalizeGpuType, parseGpuProcesses, parseProbeOutput, spawnWithInput } from "../src/server/probe";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildRemoteScript, isAuthFailure, normalizeGpuType, parseGpuProcesses, parseProbeOutput, runProbe, spawnWithInput } from "../src/server/probe";
 
 describe("probe parsing", () => {
+  it("carries parsed interface snapshots into the live probe result", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-probe-network-interfaces-"));
+    const fakeSsh = join(dir, "ssh");
+    writeFileSync(fakeSsh, [
+      "#!/bin/sh",
+      "cat >/dev/null",
+      "cat <<'GPUCHECK_TEST_OUTPUT'",
+      "REMOTE_HOST=alpha",
+      "NETWORK_INTERFACES<<__GPUCHECK_EOF__",
+      "ens3|52:54:00:12:34:56|10.0.0.5/24|up",
+      "__GPUCHECK_EOF__",
+      "GPUCHECK_TEST_OUTPUT",
+    ].join("\n"));
+    chmodSync(fakeSsh, 0o755);
+    const originalPath = process.env.PATH ?? "";
+    vi.stubEnv("PATH", `${dir}:${originalPath}`);
+    try {
+      const result = await runProbe({ name: "alpha", ip: "10.0.0.5" }, {
+        user: "ezc", keyPath: "/keys/gpu", connectTimeoutSeconds: 5, probeTimeoutSeconds: 5,
+        checkLogs: false, processArgsMaxChars: 512,
+      });
+      expect(result.networkInterfaces).toEqual([
+        { name: "ens3", macAddress: "52:54:00:12:34:56", ipAddresses: ["10.0.0.5/24"], state: "up" },
+      ]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("parses probe scalars and blocks", () => {
     const parsed = parseProbeOutput(
       [
