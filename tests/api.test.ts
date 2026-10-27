@@ -10,6 +10,48 @@ import type { ProbeResult } from "../src/shared/types";
 const adminHeaders = { authorization: "Bearer test-admin-key" };
 
 describe("api", () => {
+  it("clears known-host entries only for active machines with changed host-key errors", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-api-stale-host-key-"));
+    const csvPath = join(dir, "machines.csv");
+    writeFileSync(csvPath, "name,ip\nchanged,10.0.0.1:63001\nrefused,10.0.0.2\n");
+    const db = createDatabase(join(dir, "db.sqlite"));
+    db.migrate();
+    db.upsertMachine({ name: "changed", ip: "10.0.0.1:63001", sshHost: "10.0.0.1", sshPort: 63001 });
+    db.upsertMachine({ name: "refused", ip: "10.0.0.2", sshHost: "10.0.0.2", sshPort: 22 });
+    const cleared: Array<[string, number]> = [];
+    const app = buildApp({
+      db,
+      config: makeConfig(dir, csvPath),
+      clearKnownHost: async (host: string, port: number) => { cleared.push([host, port]); },
+      probeMachine: async (machine): Promise<ProbeResult> => ({
+        name: machine.name,
+        ip: machine.ip,
+        sshOk: false,
+        sshError: machine.name === "changed"
+          ? "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!"
+          : "ssh: connect to host 10.0.0.2 port 22: Connection refused",
+        status: "ssh_failed",
+      }),
+    });
+
+    await app.inject({ method: "POST", url: "/api/poll-runs", headers: adminHeaders });
+    const machines = db.listMachines();
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/known-hosts/clear-stale",
+      headers: adminHeaders,
+      payload: { machineIds: machines.map((machine) => machine.id) },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ cleared: ["changed"], skipped: ["refused"], failed: [] });
+    expect(cleared).toEqual([["10.0.0.1", 63001]]);
+    expect((await app.inject({ method: "POST", url: "/api/known-hosts/clear-stale", payload: { machineIds: [machines[0]!.id] } })).statusCode).toBe(401);
+
+    await app.close();
+    db.close();
+  });
+
   it("validates, protects, and exposes durable agent operations", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-api-agent-operation-"));
     const csvPath = join(dir, "machines.csv");

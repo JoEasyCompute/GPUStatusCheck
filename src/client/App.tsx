@@ -15,6 +15,7 @@ import { MachineCards } from "./MachineCards";
 import type { MachineGroupBy } from "./machineGroups";
 import { MachineDetailModal } from "./MachineDetailModal";
 import { MachineTable } from "./MachineTable";
+import { isChangedHostKeyError } from "../shared/sshHostKey";
 import { matchesMachineStatusFilter, type MachineStatusFilter } from "./machineFilters";
 import { formatElapsed, formatTime } from "./formatters";
 
@@ -88,6 +89,8 @@ export function App() {
   const [submittingAgentOperation, setSubmittingAgentOperation] = useState(false);
   const [agentOperation, setAgentOperation] = useState<AgentOperationDetail | undefined>();
   const [agentOperationError, setAgentOperationError] = useState("");
+  const [clearingStaleHostKeys, setClearingStaleHostKeys] = useState(false);
+  const [hostKeyMessage, setHostKeyMessage] = useState("");
 
   function clearStoredAdminKey() {
     try {
@@ -286,6 +289,36 @@ export function App() {
     }
   }
 
+  async function clearStaleHostKeys() {
+    if (admin.mode !== "unlocked" || clearingStaleHostKeys) return;
+    const machineIds = staleSshKeyMachines.map((machine) => machine.id).filter((id): id is number => id !== undefined);
+    if (machineIds.length === 0) return;
+    const confirmed = window.confirm(
+      `Remove stored SSH host keys for ${machineIds.length} machines? Host key checking stays enabled, and the next successful poll will trust the replacement keys. Continue only for machines that were intentionally reinstalled.`,
+    );
+    if (!confirmed) return;
+
+    setClearingStaleHostKeys(true);
+    setHostKeyMessage("");
+    try {
+      const result = await fetchAdminJson<{ cleared: string[]; skipped: string[]; failed: Array<{ name: string; error: string }> }>(admin.key, "/api/known-hosts/clear-stale", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ machineIds }),
+      });
+      const parts = [`Cleared ${result.cleared.length} SSH host-key entr${result.cleared.length === 1 ? "y" : "ies"}`];
+      if (result.skipped.length > 0) parts.push(`${result.skipped.length} no longer stale`);
+      if (result.failed.length > 0) parts.push(`${result.failed.length} failed (${result.failed.map(({ name }) => name).join(", ")})`);
+      parts.push("Poll now to reconnect and learn replacement keys.");
+      setHostKeyMessage(parts.join(" · "));
+      await refresh();
+    } catch (err) {
+      handleAdminError(err);
+    } finally {
+      setClearingStaleHostKeys(false);
+    }
+  }
+
   useEffect(() => {
     void refresh();
     const timer = setInterval(() => void refresh(), 5000);
@@ -400,7 +433,7 @@ export function App() {
   const filteredMachines = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return machines.filter((machine) => {
-      const statusMatches = matchesMachineStatusFilter(machine.latest?.status, statusFilter);
+      const statusMatches = matchesMachineStatusFilter(machine.latest?.status, statusFilter, machine.latest?.sshError);
       const gpuTypeMatches = gpuTypeFilter === "all" || (machine.latest?.gpuType ?? "") === gpuTypeFilter;
       const searchMatches = !needle || [machine.name, machine.ip, machine.platform, machine.owner, machine.location]
         .filter(Boolean)
@@ -423,6 +456,10 @@ export function App() {
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId);
   const selectedAgentMachines = machines.filter((machine) => machine.id !== undefined && admin.selectedMachineIds.includes(machine.id));
   const installedAgentIds = useMemo(() => installedAgentMachineIds(machines), [machines]);
+  const staleSshKeyMachines = useMemo(
+    () => machines.filter((machine) => machine.latest?.status === "ssh_failed" && isChangedHostKeyError(machine.latest.sshError)),
+    [machines],
+  );
 
   return (
     <main>
@@ -442,6 +479,7 @@ export function App() {
 
       {error ? <div className="error">{error}</div> : null}
       {copyMessage ? <div className="notice">{copyMessage}</div> : null}
+      {hostKeyMessage ? <div className="notice">{hostKeyMessage}</div> : null}
 
       <section className="summary-grid">
         <SummaryCard label="Machines" value={summary.total} />
@@ -537,6 +575,7 @@ export function App() {
           <option value="ok">OK</option>
           <option value="degraded">Degraded</option>
           <option value="ssh_failed">SSH failed</option>
+          <option value="stale_ssh_key">Stale SSH keys</option>
         </select>
         <select value={gpuTypeFilter} onChange={(event) => setGpuTypeFilter(event.target.value)} aria-label="Filter by GPU type">
           <option value="all">All GPU types</option>
@@ -598,6 +637,11 @@ export function App() {
             <button className="primary" onClick={() => void upgradeInstalledAgents()} disabled={submittingAgentOperation || installedAgentIds.length === 0}>
               Upgrade installed agents ({installedAgentIds.length})
             </button>
+            {staleSshKeyMachines.length > 0 ? (
+              <button onClick={() => void clearStaleHostKeys()} disabled={clearingStaleHostKeys}>
+                {clearingStaleHostKeys ? "Clearing stale keys..." : `Clear stale SSH keys (${staleSshKeyMachines.length})`}
+              </button>
+            ) : null}
             {viewMode !== "gpus" ? <button onClick={selectVisibleForAgents}>Select visible</button> : null}
             <button onClick={() => dispatchAdmin({ type: "selection", machineIds: [] })} disabled={admin.selectedMachineIds.length === 0}>Clear selection</button>
             <button className="primary" onClick={() => setAgentDialogOpen(true)} disabled={admin.selectedMachineIds.length === 0}>

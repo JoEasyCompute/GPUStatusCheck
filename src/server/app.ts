@@ -11,6 +11,8 @@ import { PollFailedError, PollScheduler, type ProbeMachine } from "./scheduler";
 import { readStorageHealth } from "./storageHealth";
 import { verifyAdminAuthorization } from "./adminAuth";
 import { AgentOperationRunner } from "./agentOperations";
+import { clearKnownHost as clearKnownHostEntry, type ClearKnownHost } from "./knownHosts";
+import { isChangedHostKeyError } from "../shared/sshHostKey";
 
 type AgentOperationController = Pick<AgentOperationRunner, "start" | "recoverInterrupted" | "isMachineBusy">;
 
@@ -20,12 +22,14 @@ export type BuildAppOptions = {
   probeMachine?: ProbeMachine;
   storageHealthProvider?: () => Promise<StorageHealth>;
   agentOperationRunner?: AgentOperationController;
+  clearKnownHost?: ClearKnownHost;
 };
 
 export function buildApp(options: BuildAppOptions) {
   const app = fastify({ logger: false });
   const scheduler = new PollScheduler(options.db, options.config, options.probeMachine);
   const agentOperationRunner = options.agentOperationRunner ?? new AgentOperationRunner(options.db, options.config);
+  const clearKnownHost = options.clearKnownHost ?? clearKnownHostEntry;
   agentOperationRunner.recoverInterrupted();
   options.db.pruneAgentOperations(options.config.agentOperationRetentionDays);
   const storageHealthProvider = options.storageHealthProvider
@@ -272,6 +276,56 @@ export function buildApp(options: BuildAppOptions) {
       }
       throw error;
     }
+  });
+  app.post<{ Body: Record<string, unknown> }>("/api/known-hosts/clear-stale", async (request, reply) => {
+    if (!requireAdmin(request.headers.authorization, reply)) return;
+    const body = request.body ?? {};
+    const machineIds = body.machineIds;
+    if (Object.keys(body).length !== 1 || !Array.isArray(machineIds)
+      || machineIds.length === 0 || machineIds.length > options.config.agentMaxBatch
+      || machineIds.some((id) => !Number.isInteger(id) || Number(id) < 1)
+      || new Set(machineIds).size !== machineIds.length) {
+      return reply.code(400).send({ error: "machineIds must be a non-empty list of unique active machine ids within the batch limit" });
+    }
+
+    const ids = machineIds.map(Number);
+    const currentMachines = new Map(options.db.listMachines().map((machine) => [machine.id!, machine]));
+    let inventory;
+    try {
+      inventory = readInventoryFromFile(options.config.machinesPath);
+    } catch (error) {
+      return reply.code(400).send({ error: `cannot read current inventory: ${error instanceof Error ? error.message : String(error)}` });
+    }
+    const inventoryByName = new Map(inventory.map((machine) => [machine.name, machine]));
+    const invalidIds = ids.filter((id) => {
+      const stored = currentMachines.get(id);
+      if (!stored) return true;
+      const current = inventoryByName.get(stored.name);
+      return !current || current.ip !== stored.ip
+        || (current.sshHost ?? current.ip) !== (stored.sshHost ?? stored.ip)
+        || (current.sshPort ?? 22) !== (stored.sshPort ?? 22);
+    });
+    if (invalidIds.length > 0) {
+      return reply.code(400).send({ error: "machines must be active inventory entries", machineIds: invalidIds });
+    }
+
+    const cleared: string[] = [];
+    const skipped: string[] = [];
+    const failed: Array<{ name: string; error: string }> = [];
+    for (const id of ids) {
+      const machine = currentMachines.get(id)!;
+      if (machine.latest?.status !== "ssh_failed" || !isChangedHostKeyError(machine.latest.sshError)) {
+        skipped.push(machine.name);
+        continue;
+      }
+      try {
+        await clearKnownHost(machine.sshHost ?? machine.ip, machine.sshPort ?? 22);
+        cleared.push(machine.name);
+      } catch (error) {
+        failed.push({ name: machine.name, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return { cleared, skipped, failed };
   });
   app.post("/api/poll-runs", async (_request, reply) => {
     if (!requireAdmin(_request.headers.authorization, reply)) {

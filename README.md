@@ -302,6 +302,12 @@ machine failures do not stop the batch, and progress/history survive tab
 closure. A server restart marks ambiguous queued/running items interrupted
 instead of retrying them automatically.
 
+The **Stale SSH keys** status filter shows machines whose latest SSH error
+reports a changed host key. Admins can clear their stored `known_hosts` entries
+in one operation; host-key checking stays enabled, and the next successful SSH
+connection accepts the replacement key. Use this only after verifying the
+machines were intentionally reinstalled.
+
 Settings:
 
 ```bash

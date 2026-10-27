@@ -11,6 +11,12 @@ describe("machine status filter", () => {
     expect(matchesMachineStatusFilter(undefined, "ok_degraded")).toBe(false);
   });
 
+  it("matches only explicit changed-host-key errors for the stale-key filter", () => {
+    expect(matchesMachineStatusFilter("ssh_failed", "stale_ssh_key", "WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!")).toBe(true);
+    expect(matchesMachineStatusFilter("ssh_failed", "stale_ssh_key", "Connection refused")).toBe(false);
+    expect(matchesMachineStatusFilter("ok", "stale_ssh_key", "REMOTE HOST IDENTIFICATION HAS CHANGED")).toBe(false);
+  });
+
   it("selects exactly the machines visible under the combined filter", () => {
     const machines = [
       machine(1, "ok"),
