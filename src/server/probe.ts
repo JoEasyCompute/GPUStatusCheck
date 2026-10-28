@@ -34,6 +34,7 @@ export type ParsedProbe = {
   processes: GpuProcess[];
   gpuMetrics: GpuMetric[];
   networkInterfaces?: NetworkInterface[];
+  bmcIpAddress?: string;
 };
 
 export type RunProbeOptions = {
@@ -83,6 +84,7 @@ export function parseProbeOutput(stdout: string, processArgsMaxChars: number): P
     networkInterfaces: stdout.includes("NETWORK_INTERFACES<<")
       ? parseNetworkInterfaces(block(stdout, "NETWORK_INTERFACES"))
       : undefined,
+    bmcIpAddress: scalar(stdout, "BMC_IP_ADDRESS") || undefined,
   };
 }
 
@@ -289,6 +291,7 @@ async function runProbeAs(machine: Machine, options: RunProbeOptions, user: stri
       processes: parsed.processes,
       gpuMetrics: parsed.gpuMetrics,
       networkInterfaces: parsed.networkInterfaces,
+      bmcIpAddress: parsed.bmcIpAddress,
     };
   } catch (error) {
     return {

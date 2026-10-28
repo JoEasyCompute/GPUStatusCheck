@@ -52,6 +52,7 @@ export type ParsedAgentSample = {
   processes: GpuProcess[];
   gpuMetrics: GpuMetric[];
   networkInterfaces?: NetworkInterface[];
+  bmcIpAddress?: string;
 };
 
 type Sqlite = Database.Database;
@@ -124,6 +125,7 @@ export function createDatabase(dbPath: string) {
         machine_id INTEGER NOT NULL,
         source TEXT NOT NULL CHECK(source IN ('probe', 'agent')),
         interfaces_json TEXT NOT NULL DEFAULT '[]',
+        bmc_ip_address TEXT NOT NULL DEFAULT '',
         observed_at TEXT NOT NULL,
         PRIMARY KEY(machine_id, source),
         FOREIGN KEY(machine_id) REFERENCES machines(id) ON DELETE CASCADE
@@ -333,6 +335,7 @@ export function createDatabase(dbPath: string) {
     ensureColumn(db, "probe_results", "mem_used_pct", "REAL");
     ensureColumn(db, "probe_results", "disk_total_kb", "REAL");
     ensureColumn(db, "probe_results", "disk_used_pct", "REAL");
+    ensureColumn(db, "machine_network_snapshots", "bmc_ip_address", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_metrics", "pci_bus_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_metrics", "power_limit_w", "REAL");
     ensureColumn(db, "gpu_metrics", "graphics_clock_mhz", "INTEGER");
@@ -409,17 +412,19 @@ export function createDatabase(dbPath: string) {
     source: NetworkInterfaceSnapshot["source"],
     observedAt: string,
     interfaces: NetworkInterface[],
+    bmcIpAddress?: string,
   ): void {
     const existing = db.prepare("SELECT observed_at FROM machine_network_snapshots WHERE machine_id = ? AND source = ?")
       .get(machineId, source) as { observed_at: string } | undefined;
     if (existing && Date.parse(existing.observed_at) > Date.parse(observedAt)) return;
     db.prepare(`
-      INSERT INTO machine_network_snapshots (machine_id, source, interfaces_json, observed_at)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO machine_network_snapshots (machine_id, source, interfaces_json, bmc_ip_address, observed_at)
+      VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(machine_id, source) DO UPDATE SET
         interfaces_json = excluded.interfaces_json,
+        bmc_ip_address = excluded.bmc_ip_address,
         observed_at = excluded.observed_at
-    `).run(machineId, source, JSON.stringify(interfaces), observedAt);
+    `).run(machineId, source, JSON.stringify(interfaces), bmcIpAddress ?? "", observedAt);
   }
 
   function insertProbeResult(pollRunId: number, machineId: number, result: ProbeResult): number {
@@ -473,7 +478,7 @@ export function createDatabase(dbPath: string) {
       durationMs: result.durationMs ?? null,
     });
     if (result.sshOk && result.networkInterfaces !== undefined) {
-      replaceMachineNetworkSnapshot(machineId, "probe", checkedAt, result.networkInterfaces);
+      replaceMachineNetworkSnapshot(machineId, "probe", checkedAt, result.networkInterfaces, result.bmcIpAddress);
     }
     const probeResultId = Number(info.lastInsertRowid);
     const owner = (result.owner ?? "").trim();
@@ -555,6 +560,7 @@ export function createDatabase(dbPath: string) {
         source: row.source,
         observedAt: row.observed_at,
         interfaces: parseNetworkInterfacesJson(row.interfaces_json),
+        bmcIpAddress: row.bmc_ip_address || undefined,
       });
       snapshotsByMachine.set(row.machine_id, snapshots);
     }
@@ -1120,7 +1126,7 @@ export function createDatabase(dbPath: string) {
       insertMetricRow(db, pollRunId, machineId, probeResultId, checkedAt, metric);
     }
     if (parsed.networkInterfaces !== undefined) {
-      replaceMachineNetworkSnapshot(machineId, "agent", checkedAt, parsed.networkInterfaces);
+      replaceMachineNetworkSnapshot(machineId, "agent", checkedAt, parsed.networkInterfaces, parsed.bmcIpAddress);
     }
     return true;
   }
@@ -1623,6 +1629,7 @@ type NetworkSnapshotRow = {
   machine_id: number;
   source: "probe" | "agent";
   interfaces_json: string;
+  bmc_ip_address: string;
   observed_at: string;
 };
 

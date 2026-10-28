@@ -26,6 +26,7 @@ export type NetworkInterfaceSnapshot = {
   source: "probe" | "agent";
   observedAt: string;
   interfaces: NetworkInterface[];
+  bmcIpAddress?: string;
 };
 
 export type FleetHistoryPoint = {
@@ -177,6 +178,7 @@ export type ProbeResult = {
   processes?: GpuProcess[];
   gpuMetrics?: GpuMetric[];
   networkInterfaces?: NetworkInterface[];
+  bmcIpAddress?: string;
 };
 
 export type PollRun = {

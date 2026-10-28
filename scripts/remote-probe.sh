@@ -172,6 +172,25 @@ for iface_path in /sys/class/net/*; do
 $interface_row"; else network_interfaces=$interface_row; fi
 done
 
+# Best-effort in-band read of the BMC's first configured IPMI LAN channel.
+# Many SSH poll users cannot access /dev/ipmi0; the root agent can often read
+# it. Failure or missing tooling must not affect the host probe.
+bmc_ip_address=""
+if command -v ipmitool >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+    bmc_output=""
+    bmc_output=$(timeout 3 ipmitool -I open lan print 2>/dev/null) || bmc_output=""
+    bmc_ip_address=$(printf '%s\n' "$bmc_output" | awk -F: '
+        /^[[:space:]]*IP Address[[:space:]]*:/ {
+            value = $2
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            print value
+            exit
+        }')
+    case "$bmc_ip_address" in
+        0.0.0.0|255.255.255.255) bmc_ip_address="" ;;
+    esac
+fi
+
 cpu_model=""
 cpu_cores=""
 if [ -r /proc/cpuinfo ]; then
@@ -243,6 +262,7 @@ echo "MEM_USED_PCT=$mem_used_pct"
 echo "DISK_TOTAL_KB=$disk_total_kb"
 echo "DISK_USED_PCT=$disk_used_pct"
 echo "AGENT_VERSION=$agent_version"
+echo "BMC_IP_ADDRESS=$bmc_ip_address"
 if [ -n "$kernel_hits" ]; then echo "BUS_OFF=1"; else echo "BUS_OFF=0"; fi
 
 printf 'NVIDIA_SMI_OUTPUT<<__GPUCHECK_EOF__\n'

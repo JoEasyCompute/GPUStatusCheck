@@ -14,6 +14,7 @@ describe("probe parsing", () => {
       "cat >/dev/null",
       "cat <<'GPUCHECK_TEST_OUTPUT'",
       "REMOTE_HOST=alpha",
+      "BMC_IP_ADDRESS=192.168.20.42",
       "NETWORK_INTERFACES<<__GPUCHECK_EOF__",
       "ens3|52:54:00:12:34:56|10.0.0.5/24|up",
       "__GPUCHECK_EOF__",
@@ -30,6 +31,7 @@ describe("probe parsing", () => {
       expect(result.networkInterfaces).toEqual([
         { name: "ens3", macAddress: "52:54:00:12:34:56", ipAddresses: ["10.0.0.5/24"], state: "up" },
       ]);
+      expect(result.bmcIpAddress).toBe("192.168.20.42");
     } finally {
       vi.unstubAllEnvs();
     }
@@ -56,6 +58,7 @@ describe("probe parsing", () => {
         "DISK_TOTAL_KB=1843200000",
         "DISK_USED_PCT=67",
         "BUS_OFF=0",
+        "BMC_IP_ADDRESS=192.168.20.42",
         "NETWORK_INTERFACES<<__GPUCHECK_EOF__",
         "ens3|52:54:00:12:34:56|10.0.0.5/24,fd00::5/64|up",
         "ib0|00:11:22:33:44:55||down",
@@ -92,6 +95,7 @@ describe("probe parsing", () => {
     expect(parsed.memUsedPct).toBe(31.4);
     expect(parsed.diskTotalKb).toBe(1843200000);
     expect(parsed.diskUsedPct).toBe(67);
+    expect(parsed.bmcIpAddress).toBe("192.168.20.42");
     expect(parsed.networkInterfaces).toEqual([
       { name: "ens3", macAddress: "52:54:00:12:34:56", ipAddresses: ["10.0.0.5/24", "fd00::5/64"], state: "up" },
       { name: "ib0", macAddress: "00:11:22:33:44:55", ipAddresses: [], state: "down" },
@@ -113,6 +117,7 @@ describe("probe parsing", () => {
   it("leaves interface data undefined for older agent payloads", () => {
     const parsed = parseProbeOutput("REMOTE_HOST=alpha\n", 512);
     expect(parsed.networkInterfaces).toBeUndefined();
+    expect(parsed.bmcIpAddress).toBeUndefined();
   });
 
   it("enriches pmon processes with ps command lines and truncates long args", () => {

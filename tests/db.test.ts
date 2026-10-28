@@ -13,6 +13,7 @@ describe("database", () => {
     const firstRun = db.createPollRun(1);
     db.insertProbeResult(firstRun, machine.id!, {
       name: "alpha", ip: "10.0.0.1", sshOk: true, status: "ok",
+      bmcIpAddress: "192.168.20.42",
       networkInterfaces: [
         { name: "ens3", macAddress: "52:54:00:12:34:56", ipAddresses: ["10.0.0.5/24"], state: "up" },
         { name: "eth1", macAddress: "aa:bb:cc:dd:ee:ff", ipAddresses: [], state: "down" },
@@ -20,7 +21,7 @@ describe("database", () => {
     });
     const first = db.listMachines()[0]?.networkInterfaceSnapshots;
     expect(first).toHaveLength(1);
-    expect(first?.[0]).toMatchObject({ source: "probe", interfaces: expect.arrayContaining([
+    expect(first?.[0]).toMatchObject({ source: "probe", bmcIpAddress: "192.168.20.42", interfaces: expect.arrayContaining([
       expect.objectContaining({ name: "ens3", macAddress: "52:54:00:12:34:56" }),
       expect.objectContaining({ name: "eth1", state: "down" }),
     ]) });

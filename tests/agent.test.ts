@@ -34,6 +34,7 @@ function sampleText(options: { gpuUtil?: number; powerW?: number; rc?: number; k
     "DISK_USED_PCT=33",
     "AGENT_VERSION=0.1.0",
     "BUS_OFF=0",
+    "BMC_IP_ADDRESS=192.168.20.42",
     "NETWORK_INTERFACES<<__GPUCHECK_EOF__",
     "ens3|52:54:00:12:34:56|10.0.0.5/24|up",
     "__GPUCHECK_EOF__",
@@ -144,7 +145,7 @@ describe("ingestDrainBatch", () => {
     expect(row.source).toBe("agent");
     expect(row.status).toBe("ok");
     expect(db.listMachines()[0]?.networkInterfaceSnapshots).toEqual([
-      { source: "agent", observedAt: ts, interfaces: [{ name: "ens3", macAddress: "52:54:00:12:34:56", ipAddresses: ["10.0.0.5/24"], state: "up" }] },
+      { source: "agent", observedAt: ts, bmcIpAddress: "192.168.20.42", interfaces: [{ name: "ens3", macAddress: "52:54:00:12:34:56", ipAddresses: ["10.0.0.5/24"], state: "up" }] },
       expect.objectContaining({ source: "probe", interfaces: [expect.objectContaining({ name: "ens3", ipAddresses: ["10.0.0.5/24"] })] }),
     ]);
     const metrics = db.raw.prepare("SELECT COUNT(*) AS n FROM gpu_metrics WHERE machine_id = ? AND checked_at = ?").get(machine.id, ts) as { n: number };

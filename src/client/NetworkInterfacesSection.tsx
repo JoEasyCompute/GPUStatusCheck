@@ -11,9 +11,13 @@ export function NetworkInterfacesSection({ snapshots }: { snapshots: NetworkInte
     <details className="detail-section network-interfaces-section">
       <summary>Network interfaces ({interfaces.length})</summary>
       {snapshots.length === 0 ? <p>No network interface snapshot has been recorded.</p> : interfaces.length === 0 ? (
-        <p>No matching network interfaces were reported.</p>
+        <>
+          <p>No matching network interfaces were reported.</p>
+          <BmcAddresses snapshots={snapshots} />
+        </>
       ) : (
         <div className="network-interface-scroll">
+          <BmcAddresses snapshots={snapshots} />
           <table className="network-interface-table">
             <thead>
               <tr>
@@ -41,5 +45,19 @@ export function NetworkInterfacesSection({ snapshots }: { snapshots: NetworkInte
         </div>
       )}
     </details>
+  );
+}
+
+function BmcAddresses({ snapshots }: { snapshots: NetworkInterfaceSnapshot[] }) {
+  return (
+    <div className="bmc-address-list">
+      {snapshots.map((snapshot) => (
+        <div className="bmc-address-row" key={snapshot.source}>
+          <strong>BMC IP · {snapshot.source === "probe" ? "SSH" : "Agent"}</strong>
+          <code>{snapshot.bmcIpAddress || "Not reported"}</code>
+          <span>Observed {formatTime(snapshot.observedAt)}</span>
+        </div>
+      ))}
+    </div>
   );
 }

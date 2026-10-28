@@ -429,8 +429,9 @@ current MAC address, assigned IP addresses, and link state. The modal keeps the
 latest snapshot from each source separately, so agent data remains available
 during SSH outages. For NATed hosts, these are addresses assigned inside the
 machine; they do not reveal the public NAT address or identify the host across
-the NAT boundary. Agent upgrades to version 0.1.2 are needed to collect this
-data from already-installed agents.
+the NAT boundary. Agent version 0.1.2 added interface snapshots; version 0.1.3
+also reports the BMC's IPMI LAN address when `ipmitool` and local IPMI access
+are available. Already-installed agents need upgrading to report these fields.
 
 Install / upgrade / remove (needs passwordless sudo on the host; hosts
 without it are skipped and stay SSH-poll-only):
