@@ -5,6 +5,26 @@ import { join } from "node:path";
 import { createDatabase } from "../src/server/db";
 
 describe("database", () => {
+  it("adds the BMC address column to an existing interface snapshot table", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-bmc-migration-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.raw.exec(`
+      CREATE TABLE machine_network_snapshots (
+        machine_id INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        interfaces_json TEXT NOT NULL DEFAULT '[]',
+        observed_at TEXT NOT NULL,
+        PRIMARY KEY(machine_id, source)
+      )
+    `);
+
+    db.migrate();
+
+    const columns = db.raw.prepare("PRAGMA table_info(machine_network_snapshots)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toContain("bmc_ip_address");
+    db.close();
+  });
+
   it("replaces the latest live network-interface snapshot when interfaces change", () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-db-network-interfaces-"));
     const db = createDatabase(join(dir, "test.sqlite"));
