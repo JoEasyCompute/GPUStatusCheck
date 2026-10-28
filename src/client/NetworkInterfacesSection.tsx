@@ -1,4 +1,6 @@
+import { useState, type MouseEvent } from "react";
 import type { NetworkInterfaceSnapshot } from "../shared/types";
+import { copyText } from "./clipboard";
 import { formatTime } from "./formatters";
 
 export function NetworkInterfacesSection({ snapshots }: { snapshots: NetworkInterfaceSnapshot[] }) {
@@ -33,7 +35,10 @@ export function NetworkInterfacesSection({ snapshots }: { snapshots: NetworkInte
               {interfaces.map((iface) => (
                 <tr key={`${iface.source}-${iface.name}`}>
                   <td>{iface.name}</td>
-                  <td className="interface-mac">{iface.macAddress || "-"}</td>
+                  <td className="interface-mac">
+                    {iface.macAddress || "-"}
+                    {iface.macAddress ? <CopyValueButton value={iface.macAddress} label={`${iface.name} MAC address from ${iface.source === "probe" ? "SSH" : "Agent"}`} /> : null}
+                  </td>
                   <td>{iface.ipAddresses.join(", ") || "-"}</td>
                   <td>{iface.state || "unknown"}</td>
                   <td>{iface.source === "probe" ? "SSH" : "Agent"}</td>
@@ -55,9 +60,31 @@ function BmcAddresses({ snapshots }: { snapshots: NetworkInterfaceSnapshot[] }) 
         <div className="bmc-address-row" key={snapshot.source}>
           <strong>BMC IP · {snapshot.source === "probe" ? "SSH" : "Agent"}</strong>
           <code>{snapshot.bmcIpAddress || "Not reported"}</code>
+          {snapshot.bmcIpAddress ? <CopyValueButton value={snapshot.bmcIpAddress} label={`BMC IP from ${snapshot.source === "probe" ? "SSH" : "Agent"}`} /> : null}
           <span>Observed {formatTime(snapshot.observedAt)}</span>
         </div>
       ))}
     </div>
+  );
+}
+
+function CopyValueButton({ value, label }: { value: string; label: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  async function copy(event: MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation();
+    try {
+      await copyText(value);
+      setState("copied");
+    } catch {
+      setState("failed");
+    }
+    window.setTimeout(() => setState("idle"), 1500);
+  }
+
+  const status = state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy";
+  return (
+    <button type="button" className="copy-value" aria-label={`Copy ${label}`} title={`Copy ${label}`} onClick={(event) => void copy(event)}>
+      {status}
+    </button>
   );
 }

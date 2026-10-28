@@ -1289,6 +1289,20 @@ dd {
   font-family: var(--font-mono);
 }
 
+.copy-value {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 11px;
+  margin-left: 6px;
+  min-height: 20px;
+  padding: 0 4px;
+}
+
+.copy-value:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 /* ---------- charts ---------- */
 
 .power-charts {

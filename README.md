@@ -173,15 +173,18 @@ SQLite, and serves a React dashboard with:
   and average power, and average temperature; a Charts button in each group
   header expands 24h group history charts (total power, average temperature,
   average GPU utilization, and total network in/out) backed by
-  `GET /api/group-history?by=owner|location&key=<label>&hours=24`
+  `GET /api/group-history?by=owner|location&key=<label>&hours=24`; Table and
+  Cards views can export all machines matching current filters to CSV, one row
+  per known GPU, regardless of collapsed groups
 - A per-machine modal with metadata (including CPU model/cores, total RAM,
   and total disk with current usage), tabbed charts (Power, Temperature,
   Utilization, Network in/out, and System with CPU/RAM/disk utilization %)
   over the last 24 hours with pinch-to-zoom and drag-to-pan, GPU process
   history, and probe history; when SSH fails, the current failure remains the
   machine status while the latest successful probe time and its GPU, process,
-  CPU, memory, and disk snapshot remain visible; clicking the IP copies a
-  ready-to-use SSH command
+  CPU, memory, and disk snapshot remain visible; the Network interfaces
+  section has one-click MAC and BMC IP copy controls; clicking the machine IP
+  copies a ready-to-use SSH command
 - GPU lifecycle tracking by UUID: every telemetry row records the GPU's UUID,
   an identity table follows each physical card across machines/slots/tenants
   (sighting segments), per-GPU job rows carry the owner renting the GPU at

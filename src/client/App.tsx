@@ -11,6 +11,7 @@ import { copyText } from "./clipboard";
 import { FleetCharts } from "./FleetCharts";
 import { GpuDetailModal } from "./GpuDetailModal";
 import { GpuInventory } from "./GpuInventory";
+import { buildVisibleMachineGpuCsv } from "./machineExport";
 import { MachineCards } from "./MachineCards";
 import type { MachineGroupBy } from "./machineGroups";
 import { MachineDetailModal } from "./MachineDetailModal";
@@ -289,6 +290,18 @@ export function App() {
     }
   }
 
+  function exportVisibleMachinesCsv() {
+    const csv = buildVisibleMachineGpuCsv(filteredMachines, gpus);
+    const url = window.URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `gpu-status-visible-machines-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+  }
+
   async function clearStaleHostKeys() {
     if (admin.mode !== "unlocked" || clearingStaleHostKeys) return;
     const machineIds = staleSshKeyMachines.map((machine) => machine.id).filter((id): id is number => id !== undefined);
@@ -456,6 +469,10 @@ export function App() {
   const selectedMachine = machines.find((machine) => machine.id === selectedMachineId);
   const selectedAgentMachines = machines.filter((machine) => machine.id !== undefined && admin.selectedMachineIds.includes(machine.id));
   const installedAgentIds = useMemo(() => installedAgentMachineIds(machines), [machines]);
+  const visibleGpuCount = useMemo(() => {
+    const visibleIds = new Set(filteredMachines.map((machine) => machine.id).filter((id): id is number => id !== undefined));
+    return gpus.filter((gpu) => gpu.lastMachineId !== null && visibleIds.has(gpu.lastMachineId)).length;
+  }, [filteredMachines, gpus]);
   const staleSshKeyMachines = useMemo(
     () => machines.filter((machine) => machine.latest?.status === "ssh_failed" && isChangedHostKeyError(machine.latest.sshError)),
     [machines],
@@ -618,6 +635,11 @@ export function App() {
             GPUs
           </button>
         </div>
+        {viewMode !== "gpus" ? (
+          <button onClick={exportVisibleMachinesCsv} disabled={visibleGpuCount === 0} title="Export one row per known GPU in the filtered machine list">
+            Export CSV ({visibleGpuCount} GPUs)
+          </button>
+        ) : null}
         {viewMode !== "gpus" ? (
           <select
             value={groupBy}
