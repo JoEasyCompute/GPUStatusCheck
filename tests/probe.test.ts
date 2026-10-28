@@ -1,11 +1,66 @@
 import { describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildRemoteScript, isAuthFailure, normalizeGpuType, parseGpuProcesses, parseProbeOutput, runProbe, spawnWithInput } from "../src/server/probe";
+import { buildRemoteScript, isAuthFailure, isTransientSshFailure, normalizeGpuType, parseGpuProcesses, parseProbeOutput, runProbe, spawnWithInput } from "../src/server/probe";
 
 describe("probe parsing", () => {
+  it("retries a transient SSH reset once before returning a failure", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-probe-transient-retry-"));
+    const fakeSsh = join(dir, "ssh");
+    const counter = join(dir, "ssh-count");
+    writeFileSync(fakeSsh, [
+      "#!/bin/sh",
+      `count=0; [ -f '${counter}' ] && count=$(cat '${counter}')`,
+      "count=$((count + 1))",
+      `printf '%s' "$count" > '${counter}'`,
+      "cat >/dev/null",
+      "if [ \"$count\" -eq 1 ]; then echo 'kex_exchange_identification: read: Connection reset by peer' >&2; exit 255; fi",
+      "printf '%s\\n' 'REMOTE_HOST=alpha' 'NVIDIA_SMI_RC=0' 'GPU_COUNT=1' 'BUS_OFF=0'",
+    ].join("\n"));
+    chmodSync(fakeSsh, 0o755);
+    vi.stubEnv("PATH", `${dir}:${process.env.PATH ?? ""}`);
+    try {
+      const result = await runProbe({ name: "alpha", ip: "10.0.0.5" }, {
+        user: "ezc", keyPath: "/keys/gpu", connectTimeoutSeconds: 5, probeTimeoutSeconds: 5,
+        checkLogs: false, processArgsMaxChars: 512,
+      });
+      expect(readFileSync(counter, "utf8")).toBe("2");
+      expect(result.status).toBe("ok");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("returns an SSH failure after the single transient retry also fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-probe-transient-failure-"));
+    const fakeSsh = join(dir, "ssh");
+    const counter = join(dir, "ssh-count");
+    writeFileSync(fakeSsh, [
+      "#!/bin/sh",
+      `count=0; [ -f '${counter}' ] && count=$(cat '${counter}')`,
+      "count=$((count + 1))",
+      `printf '%s' "$count" > '${counter}'`,
+      "cat >/dev/null",
+      "echo 'ssh: connect to host 10.0.0.5 port 22: No route to host' >&2",
+      "exit 255",
+    ].join("\n"));
+    chmodSync(fakeSsh, 0o755);
+    vi.stubEnv("PATH", `${dir}:${process.env.PATH ?? ""}`);
+    try {
+      const result = await runProbe({ name: "alpha", ip: "10.0.0.5" }, {
+        user: "ezc", keyPath: "/keys/gpu", connectTimeoutSeconds: 5, probeTimeoutSeconds: 5,
+        checkLogs: false, processArgsMaxChars: 512,
+      });
+      expect(readFileSync(counter, "utf8")).toBe("2");
+      expect(result.status).toBe("ssh_failed");
+      expect(result.sshError).toContain("No route to host");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("carries parsed interface snapshots into the live probe result", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-probe-network-interfaces-"));
     const fakeSsh = join(dir, "ssh");
@@ -166,6 +221,16 @@ describe("probe parsing", () => {
     expect(isAuthFailure("ssh: connect to host 10.0.0.5 port 22: Connection refused")).toBe(false);
     expect(isAuthFailure("probe timed out after 60s")).toBe(false);
     expect(isAuthFailure(undefined)).toBe(false);
+  });
+
+  it("limits transient retries to route and connection transport errors", () => {
+    expect(isTransientSshFailure("No route to host")).toBe(true);
+    expect(isTransientSshFailure("Connection reset by peer")).toBe(true);
+    expect(isTransientSshFailure("Connection closed by peer")).toBe(true);
+    expect(isTransientSshFailure("Connection timed out")).toBe(true);
+    expect(isTransientSshFailure("Permission denied (publickey)")).toBe(false);
+    expect(isTransientSshFailure("probe timed out after 60s")).toBe(false);
+    expect(isTransientSshFailure("REMOTE HOST IDENTIFICATION HAS CHANGED")).toBe(false);
   });
 
   it("builds remote script with pmon and bounded ps enrichment", () => {

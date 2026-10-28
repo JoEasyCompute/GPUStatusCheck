@@ -16,9 +16,18 @@ describe("BMC IP probe", () => {
     expect(output.status).toBe(0);
     expect(output.stdout).toContain("BMC_IP_ADDRESS=");
   });
+
+  it("uses non-interactive sudo when the SSH user cannot read the IPMI device", () => {
+    const output = runProbeWithIpmitool(
+      "if [ \"$BMC_SUDO\" = yes ]; then printf '%s\\n' 'IP Address : 10.10.20.228'; else exit 1; fi",
+      true,
+    );
+    expect(output.status).toBe(0);
+    expect(output.stdout).toContain("BMC_IP_ADDRESS=10.10.20.228");
+  });
 });
 
-function runProbeWithIpmitool(body: string) {
+function runProbeWithIpmitool(body: string, withSudo = false) {
   const dir = mkdtempSync(join(tmpdir(), "gpu-bmc-probe-"));
   const command = join(dir, "ipmitool");
   writeFileSync(command, `#!/bin/sh\n${body}\n`);
@@ -26,6 +35,11 @@ function runProbeWithIpmitool(body: string) {
   const timeout = join(dir, "timeout");
   writeFileSync(timeout, "#!/bin/sh\nshift\nexec \"$@\"\n");
   chmodSync(timeout, 0o755);
+  if (withSudo) {
+    const sudo = join(dir, "sudo");
+    writeFileSync(sudo, "#!/bin/sh\n[ \"$1\" = -n ] && shift\nBMC_SUDO=yes; export BMC_SUDO\nexec \"$@\"\n");
+    chmodSync(sudo, 0o755);
+  }
   return spawnSync("sh", [resolve("scripts/remote-probe.sh"), "alpha", "local", "0"], {
     encoding: "utf8",
     env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` },

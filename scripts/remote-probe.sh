@@ -173,19 +173,28 @@ $interface_row"; else network_interfaces=$interface_row; fi
 done
 
 # Best-effort in-band read of the BMC's first configured IPMI LAN channel.
-# Many SSH poll users cannot access /dev/ipmi0; the root agent can often read
-# it. Failure or missing tooling must not affect the host probe.
+# Many SSH poll users cannot access /dev/ipmi0, so try the same read-only
+# query through non-interactive sudo. The agent runs as root. Failure or
+# missing tooling must not affect the host probe.
 bmc_ip_address=""
-if command -v ipmitool >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
-    bmc_output=""
-    bmc_output=$(timeout 3 ipmitool -I open lan print 2>/dev/null) || bmc_output=""
-    bmc_ip_address=$(printf '%s\n' "$bmc_output" | awk -F: '
+extract_bmc_ip() {
+    printf '%s\n' "$1" | awk -F: '
         /^[[:space:]]*IP Address[[:space:]]*:/ {
             value = $2
             gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
             print value
             exit
-        }')
+        }'
+}
+
+if command -v ipmitool >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+    bmc_output=""
+    bmc_output=$(timeout 3 ipmitool -I open lan print 2>/dev/null) || bmc_output=""
+    bmc_ip_address=$(extract_bmc_ip "$bmc_output")
+    if [ -z "$bmc_ip_address" ] && command -v sudo >/dev/null 2>&1; then
+        bmc_output=$(timeout 3 sudo -n ipmitool -I open lan print 2>/dev/null) || bmc_output=""
+        bmc_ip_address=$(extract_bmc_ip "$bmc_output")
+    fi
     case "$bmc_ip_address" in
         0.0.0.0|255.255.255.255) bmc_ip_address="" ;;
     esac

@@ -471,6 +471,11 @@ AUTH_FAILURE_RE = re.compile(
     r"permission denied|authentication|publickey|no supported authentication methods",
     re.IGNORECASE,
 )
+TRANSIENT_SSH_FAILURE_RE = re.compile(
+    r"no route to host|network is unreachable|connection reset by peer|connection closed by|connection timed out|operation timed out",
+    re.IGNORECASE,
+)
+TRANSIENT_SSH_RETRY_DELAY_SECONDS = 1
 
 
 def run_ssh_probe(
@@ -482,15 +487,30 @@ def run_ssh_probe(
     check_logs: bool = True,
     fallback_user: str = "",
 ) -> ProbeResult:
-    """Probe as `user`; on an auth-shaped SSH failure retry as `fallback_user`."""
-    primary = _run_ssh_probe_as(machine, user, key_path, timeout, probe_timeout, check_logs)
+    """Probe with one retry for transient transport errors and an auth fallback user."""
+    primary = _run_ssh_probe_with_transient_retry(machine, user, key_path, timeout, probe_timeout, check_logs)
     if primary.status != "ssh_failed":
         return primary
     fallback = fallback_user.strip()
     if not fallback or fallback == user or not AUTH_FAILURE_RE.search(primary.ssh_error):
         return primary
-    retried = _run_ssh_probe_as(machine, fallback, key_path, timeout, probe_timeout, check_logs)
+    retried = _run_ssh_probe_with_transient_retry(machine, fallback, key_path, timeout, probe_timeout, check_logs)
     return primary if retried.status == "ssh_failed" else retried
+
+
+def _run_ssh_probe_with_transient_retry(
+    machine: Machine,
+    user: str,
+    key_path: str,
+    timeout: int,
+    probe_timeout: int,
+    check_logs: bool,
+) -> ProbeResult:
+    first = _run_ssh_probe_as(machine, user, key_path, timeout, probe_timeout, check_logs)
+    if first.status != "ssh_failed" or not TRANSIENT_SSH_FAILURE_RE.search(first.ssh_error):
+        return first
+    time.sleep(TRANSIENT_SSH_RETRY_DELAY_SECONDS)
+    return _run_ssh_probe_as(machine, user, key_path, timeout, probe_timeout, check_logs)
 
 
 def _run_ssh_probe_as(

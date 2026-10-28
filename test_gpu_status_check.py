@@ -161,14 +161,19 @@ class GPUStatusCheckTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.ssh_user, "ubuntu")
 
-    def test_run_ssh_probe_does_not_retry_on_network_failure(self) -> None:
+    def test_run_ssh_probe_retries_once_after_transient_network_failure(self) -> None:
         unreachable = subprocess_completed(
             returncode=255,
             stdout="",
-            stderr="ssh: connect to host 10.0.0.5 port 22: Network is unreachable",
+            stderr="kex_exchange_identification: read: Connection reset by peer",
+        )
+        succeeded = subprocess_completed(
+            returncode=0,
+            stdout="REMOTE_HOST=alpha\nNVIDIA_SMI_RC=0\nGPU_COUNT=1\nBUS_OFF=0\n",
+            stderr="",
         )
 
-        with patch("gpu_status_check.subprocess.run", return_value=unreachable) as run:
+        with patch("gpu_status_check.subprocess.run", side_effect=[unreachable, succeeded]) as run, patch("gpu_status_check.time.sleep") as sleep:
             result = run_ssh_probe(
                 Machine(name="alpha", ip="10.0.0.5"),
                 user="ezc",
@@ -177,8 +182,49 @@ class GPUStatusCheckTests(unittest.TestCase):
                 fallback_user="ubuntu",
             )
 
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_called_once()
+        self.assertEqual(result.status, "ok")
+
+    def test_run_ssh_probe_does_not_retry_unmatched_failure(self) -> None:
+        refused = subprocess_completed(
+            returncode=255,
+            stdout="",
+            stderr="ssh: connect to host 10.0.0.5 port 22: Connection refused",
+        )
+
+        with patch("gpu_status_check.subprocess.run", return_value=refused) as run, patch("gpu_status_check.time.sleep") as sleep:
+            result = run_ssh_probe(
+                Machine(name="alpha", ip="10.0.0.5"),
+                user="ezc",
+                key_path="~/.ssh/test-key",
+                timeout=10,
+            )
+
         self.assertEqual(run.call_count, 1)
+        sleep.assert_not_called()
         self.assertEqual(result.status, "ssh_failed")
+
+    def test_run_ssh_probe_stays_failed_after_transient_retry_also_fails(self) -> None:
+        unreachable = subprocess_completed(
+            returncode=255,
+            stdout="",
+            stderr="ssh: connect to host 10.0.0.5 port 22: No route to host",
+        )
+
+        with patch("gpu_status_check.subprocess.run", side_effect=[unreachable, unreachable]) as run, patch("gpu_status_check.time.sleep") as sleep:
+            result = run_ssh_probe(
+                Machine(name="alpha", ip="10.0.0.5"),
+                user="ezc",
+                key_path="~/.ssh/test-key",
+                timeout=10,
+                fallback_user="ubuntu",
+            )
+
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_called_once()
+        self.assertEqual(result.status, "ssh_failed")
+        self.assertIn("No route to host", result.ssh_error)
 
     def test_run_ssh_probe_reports_probe_timeout(self) -> None:
         with patch(

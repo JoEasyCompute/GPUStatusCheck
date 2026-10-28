@@ -113,9 +113,14 @@ python3 gpu_status_check.py --machines machines.csv
 If SSH fails with an authentication error (e.g. `Permission denied`), both the
 CLI and the dashboard retry the probe once as `GPUCHECK_FALLBACK_USER`
 (default `ubuntu`) — useful for hosts provisioned with only the stock cloud
-user. Network failures are not retried. The user that succeeded is recorded
-with the probe result and used for the dashboard's copy-SSH-command shortcut.
+user. Other failures are not retried with the fallback user. The user that
+succeeded is recorded with the probe result and used for the dashboard's
+copy-SSH-command shortcut.
 Set `GPUCHECK_FALLBACK_USER=` (empty) to disable.
+
+Transient transport errors (`No route to host`, connection reset/closed, and
+connection timed out) are retried once after a one-second pause before the
+machine is marked SSH-failed. Authentication fallback remains separate.
 
 The script scans hosts in parallel. Use `--jobs N` or `GPUCHECK_JOBS=N` to tune
 concurrency; the default is 8. Progress is printed as hosts complete.
@@ -429,9 +434,10 @@ current MAC address, assigned IP addresses, and link state. The modal keeps the
 latest snapshot from each source separately, so agent data remains available
 during SSH outages. For NATed hosts, these are addresses assigned inside the
 machine; they do not reveal the public NAT address or identify the host across
-the NAT boundary. Agent version 0.1.2 added interface snapshots; version 0.1.3
-also reports the BMC's IPMI LAN address when `ipmitool` and local IPMI access
-are available. Already-installed agents need upgrading to report these fields.
+the NAT boundary. Agent version 0.1.2 added interface snapshots; version 0.1.4
+also reports the BMC's IPMI LAN address when `ipmitool`, `timeout`, and local
+IPMI access are available directly or through non-interactive `sudo`. Already-
+installed agents need upgrading to report these fields.
 
 Install / upgrade / remove (needs passwordless sudo on the host; hosts
 without it are skipped and stay SSH-poll-only):

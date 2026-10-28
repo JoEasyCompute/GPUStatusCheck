@@ -197,7 +197,7 @@ export function parseGpuMetrics(metricsOutput: string): GpuMetric[] {
 }
 
 export async function runProbe(machine: Machine, options: RunProbeOptions): Promise<ProbeResult> {
-  const primary = await runProbeAs(machine, options, options.user);
+  const primary = await runProbeWithTransientRetry(machine, options, options.user);
   if (primary.status !== "ssh_failed") {
     return primary;
   }
@@ -205,8 +205,21 @@ export async function runProbe(machine: Machine, options: RunProbeOptions): Prom
   if (!fallbackUser || fallbackUser === options.user || !isAuthFailure(primary.sshError)) {
     return primary;
   }
-  const fallback = await runProbeAs(machine, options, fallbackUser);
+  const fallback = await runProbeWithTransientRetry(machine, options, fallbackUser);
   return fallback.status === "ssh_failed" ? primary : fallback;
+}
+
+const transientSshFailure = /no route to host|network is unreachable|connection reset by peer|connection closed by|connection timed out|operation timed out/i;
+
+export function isTransientSshFailure(sshError: string | undefined): boolean {
+  return transientSshFailure.test(sshError ?? "");
+}
+
+async function runProbeWithTransientRetry(machine: Machine, options: RunProbeOptions, user: string): Promise<ProbeResult> {
+  const first = await runProbeAs(machine, options, user);
+  if (first.status !== "ssh_failed" || !isTransientSshFailure(first.sshError)) return first;
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  return runProbeAs(machine, options, user);
 }
 
 /** Auth-shaped SSH failures are worth retrying as the fallback user; network failures are not. */

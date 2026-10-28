@@ -40,7 +40,7 @@ describe("agent installer", () => {
 
     const result = await runAgentAction(target, "install", config, run);
 
-    expect(result).toMatchObject({ outcome: "succeeded", summary: "installed v0.1.3" });
+    expect(result).toMatchObject({ outcome: "succeeded", summary: "installed v0.1.4" });
     expect(calls).toHaveLength(2);
     expect(calls[0]?.args.at(-1)).toContain("if [ -r /var/lib/gpucheck-agent/VERSION ]");
     expect(calls[1]?.input).toContain("systemctl enable --now gpucheck-agent.timer");
@@ -54,7 +54,7 @@ describe("agent installer", () => {
 
     const result = await runAgentAction(target, "install", config, fake.run);
 
-    expect(result).toEqual({ outcome: "succeeded", summary: "installed v0.1.3", output: "active" });
+    expect(result).toEqual({ outcome: "succeeded", summary: "installed v0.1.4", output: "active" });
     expect(fake.calls.map((call) => ({ command: call.command, args: call.args, timeoutMs: call.timeoutMs }))).toEqual([
       {
         command: "ssh",
@@ -71,7 +71,7 @@ describe("agent installer", () => {
         args: [
           "-i", "/keys/gpu", "-p", "2222", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5",
           "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=1", "-o", "StrictHostKeyChecking=accept-new",
-          "ops@10.0.0.1", "sudo -n sh -s -- 0.1.3",
+          "ops@10.0.0.1", "sudo -n sh -s -- 0.1.4",
         ],
         timeoutMs: 120_000,
       },
@@ -79,24 +79,25 @@ describe("agent installer", () => {
     expect(fake.calls[1]?.input).toContain("systemctl enable --now gpucheck-agent.timer");
     expect(fake.calls[1]?.input).toContain("NETWORK_INTERFACES<<__GPUCHECK_EOF__");
     expect(fake.calls[1]?.input).toContain("ipmitool -I open lan print");
+    expect(fake.calls[1]?.input).toContain("sudo -n ipmitool -I open lan print");
   });
 
   it("skips an equal installed version unless force is enabled", async () => {
-    const skipped = commandSequence([{ code: 0, stdout: "SUDO_OK\n0.1.3\n", stderr: "" }]);
+    const skipped = commandSequence([{ code: 0, stdout: "SUDO_OK\n0.1.4\n", stderr: "" }]);
     await expect(runAgentAction(target, "install", config, skipped.run)).resolves.toEqual({
       outcome: "skipped",
-      summary: "up-to-date (v0.1.3)",
+      summary: "up-to-date (v0.1.4)",
       output: "",
     });
     expect(skipped.calls).toHaveLength(1);
 
     const forced = commandSequence([
-      { code: 0, stdout: "SUDO_OK\n0.1.3\n", stderr: "" },
+      { code: 0, stdout: "SUDO_OK\n0.1.4\n", stderr: "" },
       { code: 0, stdout: "active\n", stderr: "" },
     ]);
     await expect(runAgentAction(target, "install", { ...config, force: true }, forced.run)).resolves.toMatchObject({
       outcome: "succeeded",
-      summary: "upgraded 0.1.3 -> 0.1.3",
+      summary: "upgraded 0.1.4 -> 0.1.4",
     });
     expect(forced.calls).toHaveLength(2);
   });
@@ -109,10 +110,10 @@ describe("agent installer", () => {
 
     await expect(runAgentAction(target, "install", config, fake.run)).resolves.toMatchObject({
       outcome: "succeeded",
-      summary: "upgraded 0.1.0 -> 0.1.3",
+      summary: "upgraded 0.1.0 -> 0.1.4",
     });
     expect(fake.calls).toHaveLength(2);
-    expect(fake.calls[1]?.args.at(-1)).toBe("sudo -n sh -s -- 0.1.3");
+    expect(fake.calls[1]?.args.at(-1)).toBe("sudo -n sh -s -- 0.1.4");
   });
 
   it("skips hosts without passwordless sudo", async () => {
