@@ -36,8 +36,9 @@ export function NetworkInterfacesSection({ snapshots }: { snapshots: NetworkInte
                 <tr key={`${iface.source}-${iface.name}`}>
                   <td>{iface.name}</td>
                   <td className="interface-mac">
-                    {iface.macAddress || "-"}
-                    {iface.macAddress ? <CopyValueButton value={iface.macAddress} label={`${iface.name} MAC address from ${iface.source === "probe" ? "SSH" : "Agent"}`} /> : null}
+                    {iface.macAddress
+                      ? <CopyValueButton value={iface.macAddress} label={`${iface.name} MAC address from ${iface.source === "probe" ? "SSH" : "Agent"}`} />
+                      : "-"}
                   </td>
                   <td>{iface.ipAddresses.join(", ") || "-"}</td>
                   <td>{iface.state || "unknown"}</td>
@@ -59,8 +60,9 @@ function BmcAddresses({ snapshots }: { snapshots: NetworkInterfaceSnapshot[] }) 
       {snapshots.map((snapshot) => (
         <div className="bmc-address-row" key={snapshot.source}>
           <strong>BMC IP · {snapshot.source === "probe" ? "SSH" : "Agent"}</strong>
-          <code>{snapshot.bmcIpAddress || "Not reported"}</code>
-          {snapshot.bmcIpAddress ? <CopyValueButton value={snapshot.bmcIpAddress} label={`BMC IP from ${snapshot.source === "probe" ? "SSH" : "Agent"}`} /> : null}
+          {snapshot.bmcIpAddress
+            ? <CopyValueButton value={snapshot.bmcIpAddress} label={`BMC IP from ${snapshot.source === "probe" ? "SSH" : "Agent"}`} />
+            : <span>Not reported</span>}
           <span>Observed {formatTime(snapshot.observedAt)}</span>
         </div>
       ))}
@@ -81,10 +83,10 @@ function CopyValueButton({ value, label }: { value: string; label: string }) {
     window.setTimeout(() => setState("idle"), 1500);
   }
 
-  const status = state === "copied" ? "Copied" : state === "failed" ? "Copy failed" : "Copy";
   return (
-    <button type="button" className="copy-value" aria-label={`Copy ${label}`} title={`Copy ${label}`} onClick={(event) => void copy(event)}>
-      {status}
+    <button type="button" className="copy-value" aria-label={`Copy ${label}`} title={`Click to copy ${label}`} onClick={(event) => void copy(event)}>
+      {value}
+      {state !== "idle" ? <span className="copy-feedback" aria-live="polite">{state === "copied" ? "Copied" : "Copy failed"}</span> : null}
     </button>
   );
 }

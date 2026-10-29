@@ -20,9 +20,10 @@ describe("network interface details", () => {
     expect(markup).toContain("10:01:00 AM");
     expect(markup).toContain("BMC IP");
     expect(markup).toContain("192.168.20.42");
-    expect(markup).toContain('aria-label="Copy ens3 MAC address from SSH"');
-    expect(markup).toContain('aria-label="Copy BMC IP from SSH"');
-    expect(markup).toContain('aria-label="Copy BMC IP from Agent"');
+    expect(markup).toContain('aria-label="Copy ens3 MAC address from SSH" title="Click to copy ens3 MAC address from SSH">52:54:00:12:34:56</button>');
+    expect(markup).toContain('aria-label="Copy BMC IP from SSH" title="Click to copy BMC IP from SSH">192.168.20.42</button>');
+    expect(markup).toContain('aria-label="Copy BMC IP from Agent" title="Click to copy BMC IP from Agent">192.168.20.42</button>');
+    expect(markup).not.toContain(">Copy</button>");
   });
 
   it("explains when no interface snapshot has been recorded", () => {
