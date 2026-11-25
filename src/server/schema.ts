@@ -42,6 +42,7 @@ export const probeResults = sqliteTable("probe_results", {
   gpuType: text("gpu_type").notNull().default(""),
   gpuJobs: text("gpu_jobs").notNull().default(""),
   gpuPowerW: real("gpu_power_w"),
+  ipmiPowerW: real("ipmi_power_w"),
   gpuAvgTempC: real("gpu_avg_temp_c"),
   busOffSuspected: integer("bus_off_suspected", { mode: "boolean" }).notNull().default(false),
   busOffReason: text("bus_off_reason").notNull().default(""),

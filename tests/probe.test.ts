@@ -6,6 +6,28 @@ import { join } from "node:path";
 import { buildRemoteScript, isAuthFailure, isTransientSshFailure, normalizeGpuType, parseGpuProcesses, parseProbeOutput, runProbe, spawnWithInput } from "../src/server/probe";
 
 describe("probe parsing", () => {
+  it("decodes NIC counters and relevant extended BMC sensor readings", () => {
+    const probe = parseProbeOutput([
+      "NETWORK_INTERFACES<<__GPUCHECK_EOF__",
+      "eth0|aa||up||25000|3|0|12|7",
+      "eth1|bb||down||-1||||",
+      "__GPUCHECK_EOF__",
+      "BMC_SENSORS<<__GPUCHECK_EOF__",
+      "Inlet Temp | 01h | ok | 55.1 | 21 degrees C",
+      "Fan 1 | 02h | lcr | 29.1 | 600 RPM",
+      "PSU 1 | 03h | ok | 10.1 | Failure detected",
+      "CPU Temp | 04h | ok | 3.1 | 42 degrees C",
+      "__GPUCHECK_EOF__",
+    ].join("\n"), 100);
+    expect(probe.networkInterfaces?.[0]).toMatchObject({
+      speedMbps: 25000, counters: { rxErrors: 3, txErrors: 0, rxDropped: 12, txDropped: 7 },
+    });
+    expect(probe.networkInterfaces?.[1].speedMbps).toBeUndefined();
+    expect(probe.bmcSensors?.map(({ kind, status, reading }) => [kind, status, reading])).toEqual([
+      ["inlet", "ok", "21 degrees C"], ["fan", "lcr", "600 RPM"], ["psu", "ok", "Failure detected"],
+    ]);
+  });
+
   it("parses node telemetry and validates interface egress IPv4 addresses", () => {
     const probe = parseProbeOutput([
       "IOMMU_STATUS=enabled", "IPMI_POWER_W=0",

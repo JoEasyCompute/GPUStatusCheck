@@ -3,7 +3,8 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { GpuMetric, GpuProcess, IommuStatus, Machine, NetworkInterface, ProbeResult } from "../shared/types";
+import { nicCounterKeys } from "../shared/types";
+import type { BmcSensor, GpuMetric, GpuProcess, IommuStatus, Machine, NetworkInterface, ProbeResult } from "../shared/types";
 
 const BLOCK_END = "__GPUCHECK_EOF__";
 
@@ -38,6 +39,7 @@ export type ParsedProbe = {
   bmcIpAddress?: string;
   iommuStatus?: IommuStatus;
   ipmiPowerW?: number;
+  bmcSensors?: BmcSensor[];
 };
 
 export type RunProbeOptions = {
@@ -87,26 +89,57 @@ export function parseProbeOutput(stdout: string, processArgsMaxChars: number): P
     nvidiaSmiError: block(stdout, "NVIDIA_SMI_ERROR"),
     kernelHits,
     processes: parseGpuProcesses(block(stdout, "PMON_OUTPUT"), block(stdout, "PS_OUTPUT"), processArgsMaxChars),
-    gpuMetrics: parseGpuMetrics(block(stdout, "GPU_METRICS")),
+    gpuMetrics: parseGpuMetrics(block(stdout, "GPU_METRICS"), block(stdout, "GPU_PCIE_LINKS")),
     networkInterfaces: stdout.includes("NETWORK_INTERFACES<<")
       ? parseNetworkInterfaces(block(stdout, "NETWORK_INTERFACES"))
       : undefined,
+    bmcSensors: parseBmcSensors(block(stdout, "BMC_SENSORS")),
     bmcIpAddress: scalar(stdout, "BMC_IP_ADDRESS") || undefined,
   };
 }
 
 export function parseNetworkInterfaces(output: string): NetworkInterface[] {
   return output.split(/\r?\n/).flatMap((line) => {
-    const [name, macAddress, addresses, state, egress] = line.split("|");
+    const [name, macAddress, addresses, state, egress, speed, ...counterValues] = line.split("|");
     if (!name?.trim()) return [];
+    const speedMbps = unsignedInteger(speed);
+    const counters = Object.fromEntries(nicCounterKeys.flatMap((key, index) => {
+      const value = unsignedInteger(counterValues[index]);
+      return value === undefined ? [] : [[key, value]];
+    }));
     return [{
       name: name.trim(),
       macAddress: macAddress?.trim().toLowerCase() ?? "",
       ipAddresses: addresses?.split(",").map((address) => address.trim()).filter(Boolean) ?? [],
       state: state?.trim() ?? "unknown",
+      ...(speedMbps ? { speedMbps } : {}),
+      ...(Object.keys(counters).length ? { counters } : {}),
       ...(egress && isIPv4(egress.trim()) ? { publicIpv4: egress.trim() } : {}),
     }];
   });
+}
+
+function unsignedInteger(value: string | undefined): number | undefined {
+  if (!value || !/^\d+$/.test(value.trim())) return undefined;
+  const number = Number(value);
+  return Number.isSafeInteger(number) ? number : undefined;
+}
+
+function parseBmcSensors(output: string): BmcSensor[] | undefined {
+  const sensors = new Map<string, BmcSensor>();
+  for (const line of output.split(/\r?\n/)) {
+    const [name, number, status, entity, reading] = line.split("|").map((field) => field.trim());
+    if (!name || !/^[0-9a-f]{2}h$/i.test(number ?? "") || !status || !/^\d+\.\d+$/.test(entity ?? "")) continue;
+    const entityId = entity.split(".")[0];
+    let kind: BmcSensor["kind"];
+    if (entityId === "10" || /\b(?:psu|pwr[ _-]?supply|power[ _-]?supply)/i.test(name)) kind = "psu";
+    else if (entityId === "29" || entityId === "30" || /\bfan/i.test(name) || /\bRPM$/i.test(reading ?? "")) kind = "fan";
+    else if (/inlet|intake|ambient|\bamb[ _-]*temp/i.test(name) && /degrees [CFK]$/i.test(reading ?? "")) kind = "inlet";
+    else continue;
+    const id = `${entity}-${number}-${name}`;
+    sensors.set(id, { id, kind, name, status, reading: reading ?? "" });
+  }
+  return sensors.size ? [...sensors.values()] : undefined;
 }
 
 function normalizeGpuJobs(gpuJobs: string, gpuCount: number | null, busOffSuspected: boolean): string {
@@ -176,7 +209,20 @@ export function parseGpuProcesses(pmonOutput: string, psOutput: string, maxArgsC
   return processes;
 }
 
-export function parseGpuMetrics(metricsOutput: string): GpuMetric[] {
+export function parseGpuMetrics(metricsOutput: string, pcieOutput = ""): GpuMetric[] {
+  const links = new Map<number, Pick<GpuMetric, "pcieLinkSpeedGtps" | "pcieMaxLinkSpeedGtps" | "pcieLinkWidth" | "pcieMaxLinkWidth">>();
+  for (const line of pcieOutput.split(/\r?\n/)) {
+    const [index, speed, maxSpeed, width, maxWidth] = line.split("|").map((field) => field.trim());
+    if (!/^\d+$/.test(index)) continue;
+    const link = {
+      pcieLinkSpeedGtps: parsePcieSpeed(speed),
+      pcieMaxLinkSpeedGtps: parsePcieSpeed(maxSpeed),
+      pcieLinkWidth: parsePcieWidth(width),
+      pcieMaxLinkWidth: parsePcieWidth(maxWidth),
+    };
+    if (Object.values(link).some((reading) => reading !== null)) links.set(Number(index), link);
+  }
+
   const metrics: GpuMetric[] = [];
   for (const rawLine of metricsOutput.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -199,9 +245,21 @@ export function parseGpuMetrics(metricsOutput: string): GpuMetric[] {
       graphicsClockMhz: numericOrNull(parts[7]),
       memoryClockMhz: numericOrNull(parts[8]),
       uuid: cleanToken(parts[9]),
+      ...links.get(gpuIndex),
     });
   }
   return metrics;
+}
+
+function parsePcieSpeed(value?: string): number | null {
+  const reading = value?.match(/^(\d+(?:\.\d+)?)\s+GT\/s(?:\s+PCIe)?$/);
+  const speed = numericOrNull(reading?.[1]);
+  return speed !== null && speed > 0 ? speed : null;
+}
+
+function parsePcieWidth(value?: string): number | null {
+  const width = numericOrNull(value);
+  return width !== null && width > 0 && Number.isInteger(width) ? width : null;
 }
 
 export async function runProbe(machine: Machine, options: RunProbeOptions): Promise<ProbeResult> {
@@ -316,6 +374,7 @@ async function runProbeAs(machine: Machine, options: RunProbeOptions, user: stri
       bmcIpAddress: parsed.bmcIpAddress,
       iommuStatus: parsed.iommuStatus,
       ipmiPowerW: parsed.ipmiPowerW,
+      bmcSensors: parsed.bmcSensors,
     };
   } catch (error) {
     return {

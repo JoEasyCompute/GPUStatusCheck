@@ -446,7 +446,8 @@ export function App() {
   const filteredMachines = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return machines.filter((machine) => {
-      const statusMatches = matchesMachineStatusFilter(machine.latest?.status, statusFilter, machine.latest?.sshError);
+      const iommuStatus = machine.networkInterfaceSnapshots?.find((snapshot) => snapshot.source === "probe")?.iommuStatus;
+      const statusMatches = matchesMachineStatusFilter(machine.latest?.status, statusFilter, machine.latest?.sshError, iommuStatus);
       const gpuTypeMatches = gpuTypeFilter === "all" || (machine.latest?.gpuType ?? "") === gpuTypeFilter;
       const searchMatches = !needle || [machine.name, machine.ip, machine.platform, machine.owner, machine.location]
         .filter(Boolean)
@@ -593,6 +594,7 @@ export function App() {
           <option value="degraded">Degraded</option>
           <option value="ssh_failed">SSH failed</option>
           <option value="stale_ssh_key">Stale SSH keys</option>
+          <option value="iommu_not_enabled">IOMMU not enabled</option>
         </select>
         <select value={gpuTypeFilter} onChange={(event) => setGpuTypeFilter(event.target.value)} aria-label="Filter by GPU type">
           <option value="all">All GPU types</option>

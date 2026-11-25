@@ -40,6 +40,17 @@ describe("BMC IP probe", () => {
     expect(output.stdout.split("\n")).toContain(expected);
   });
 
+  it("includes extended BMC sensor readings in the live SSH probe", () => {
+    const row = "Fan 1 | 02h | lcr | 29.1 | 600 RPM";
+    const output = runProbeWithIpmitool(
+      `if [ "$3" = sdr ] && [ "$4" = elist ]; then printf '%s\\n' '${row}'; else exit 1; fi`,
+      false,
+      true,
+    );
+    expect(output.status).toBe(0);
+    expect(output.stdout).toContain(`BMC_SENSORS<<__GPUCHECK_EOF__\n${row}\n__GPUCHECK_EOF__`);
+  });
+
 });
 
 function runProbeWithIpmitool(body: string, withSudo = false, nodeReadings = false) {

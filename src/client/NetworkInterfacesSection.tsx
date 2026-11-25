@@ -1,5 +1,5 @@
 import { useState, type MouseEvent } from "react";
-import type { NetworkInterfaceSnapshot } from "../shared/types";
+import type { NetworkInterface, NetworkInterfaceSnapshot } from "../shared/types";
 import { copyText } from "./clipboard";
 import { formatTime } from "./formatters";
 
@@ -28,6 +28,9 @@ export function NetworkInterfacesSection({ snapshots }: { snapshots: NetworkInte
                 <th>IP addresses</th>
                 <th>Public IPv4</th>
                 <th>Link</th>
+                <th>Speed</th>
+                <th>RX errors / drops</th>
+                <th>TX errors / drops</th>
                 <th>Source</th>
                 <th>Observed</th>
               </tr>
@@ -46,16 +49,34 @@ export function NetworkInterfacesSection({ snapshots }: { snapshots: NetworkInte
                     ? <CopyValueButton value={iface.publicIpv4} label={`${iface.name} public IPv4`} />
                     : "-"}</td>
                   <td>{iface.state || "unknown"}</td>
+                  <td>{iface.speedMbps === undefined ? "-" : `${iface.speedMbps} Mbps`}</td>
+                  <td><NicCountersCell iface={iface} errors="rxErrors" dropped="rxDropped" /></td>
+                  <td><NicCountersCell iface={iface} errors="txErrors" dropped="txDropped" /></td>
                   <td>{iface.source === "probe" ? "SSH" : "Agent"}</td>
                   <td>{formatTime(iface.observedAt)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          {interfaces.some((iface) => iface.counterDeltas) && <p>Parentheses show the change since the previous snapshot.</p>}
         </div>
       )}
     </details>
   );
+}
+
+function NicCountersCell({ iface, errors, dropped }: {
+  iface: NetworkInterface;
+  errors: "rxErrors" | "txErrors";
+  dropped: "rxDropped" | "txDropped";
+}) {
+  function format(key: typeof errors | typeof dropped) {
+    const total = iface.counters?.[key];
+    const delta = iface.counterDeltas?.[key];
+    if (total === undefined) return "-";
+    return delta === undefined ? total : `${total} (+${delta})`;
+  }
+  return <>{format(errors)} / {format(dropped)}</>;
 }
 
 function BmcAddresses({ snapshots }: { snapshots: NetworkInterfaceSnapshot[] }) {

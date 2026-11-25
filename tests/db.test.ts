@@ -59,6 +59,29 @@ describe("database", () => {
     db.close();
   });
 
+  it("stores BMC sensors and NIC deltas across successful snapshots", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gpu-db-node-telemetry-"));
+    const db = createDatabase(join(dir, "test.sqlite"));
+    db.migrate();
+    const machine = db.upsertMachine({ name: "alpha", ip: "10.0.0.1" });
+    const node = { name: machine.name, ip: machine.ip, sshOk: true, status: "ok" as const };
+    const iface = { name: "eth0", macAddress: "aa", ipAddresses: [], state: "up", speedMbps: 25000 };
+    const bmcSensors = [{ id: "29.1-01h", name: "Fan 1", kind: "fan" as const, status: "lcr", reading: "600 RPM" }];
+    db.insertProbeResult(db.createPollRun(1), machine.id!, {
+      ...node, networkInterfaces: [{ ...iface, counters: { rxErrors: 9, txDropped: 5 } }],
+    });
+    db.insertProbeResult(db.createPollRun(1), machine.id!, {
+      ...node, bmcSensors, networkInterfaces: [{ ...iface, counters: { rxErrors: 11, txDropped: 1 } }],
+    });
+    db.insertProbeResult(db.createPollRun(1), machine.id!, { ...node, sshOk: false, status: "ssh_failed" });
+    expect(db.listMachines()[0]?.networkInterfaceSnapshots?.[0]).toMatchObject({
+      bmcSensors,
+      interfaces: [{ ...iface, counters: { rxErrors: 11, txDropped: 1 }, counterDeltas: { rxErrors: 2 } }],
+    });
+    expect(db.listMachines()[0]?.networkInterfaceSnapshots?.[0].interfaces[0].counterDeltas?.txDropped).toBeUndefined();
+    db.close();
+  });
+
   it("creates agent operations transactionally and prevents active machine overlap", () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-db-agent-operation-create-"));
     const db = createDatabase(join(dir, "test.sqlite"));

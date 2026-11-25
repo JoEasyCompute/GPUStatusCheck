@@ -93,6 +93,35 @@ if [ "$gpu_count" -gt 0 ] 2>/dev/null && command -v nvidia-smi >/dev/null 2>&1; 
     fi
 fi
 
+# Linux uses at least four domain digits in its PCI sysfs names. NVIDIA may
+# print additional leading zeroes. Reuse the GPU IDs from the telemetry query.
+pcie_links=""
+if [ "$node_readings" = "1" ] && [ -n "$telemetry_out" ]; then
+    pcie_devices=$(printf '%s\n' "$telemetry_out" | awk -F, '
+        {
+            gsub(/[[:space:]]/, "", $1)
+            gsub(/[[:space:]]/, "", $2)
+            split(tolower($2), bdf, ":")
+            domain = bdf[1]
+            while (length(domain) > 4 && substr(domain, 1, 1) == "0") domain = substr(domain, 2)
+            if ($1 ~ /^[0-9]+$/ && domain ~ /^[0-9a-f]+$/ &&
+                bdf[2] ~ /^[0-9a-f][0-9a-f]$/ && bdf[3] ~ /^[0-9a-f][0-9a-f]\.[0-7]$/)
+                print $1, domain ":" bdf[2] ":" bdf[3]
+        }')
+    pcie_links=$(while read -r gpu_index pci_device; do
+        [ -n "$pci_device" ] || continue
+        pci_path=/sys/bus/pci/devices/$pci_device
+        current_speed=$(cat "$pci_path/current_link_speed" 2>/dev/null) || current_speed=""
+        max_speed=$(cat "$pci_path/max_link_speed" 2>/dev/null) || max_speed=""
+        current_width=$(cat "$pci_path/current_link_width" 2>/dev/null) || current_width=""
+        max_width=$(cat "$pci_path/max_link_width" 2>/dev/null) || max_width=""
+        printf '%s|%s|%s|%s|%s\n' "$gpu_index" "$current_speed" "$max_speed" "$current_width" "$max_width"
+    done <<EOF
+$pcie_devices
+EOF
+    )
+fi
+
 # Network throughput and CPU utilization share one 1-second sampling window:
 # /proc/net/dev and /proc/stat are both read before and after the same sleep.
 # Physical interfaces only (en*/eth*/ib*/wl*) so loopback, docker bridges,
@@ -186,7 +215,14 @@ for iface_path in /sys/class/net/*; do
                     END { if (NR == 1) print address }')
             fi ;;
     esac
-    interface_row="$iface|$mac_address|$iface_addresses|$iface_state|${public_ipv4}"
+    interface_row="$iface|$mac_address|$iface_addresses|$iface_state|$public_ipv4"
+    for metric in speed statistics/rx_errors statistics/tx_errors statistics/rx_dropped statistics/tx_dropped; do
+        metric_value=""
+        if [ -r "$iface_path/$metric" ]; then
+            IFS= read -r metric_value 2>/dev/null < "$iface_path/$metric" || metric_value=""
+        fi
+        interface_row="$interface_row|$metric_value"
+    done
     if [ -n "$network_interfaces" ]; then network_interfaces="$network_interfaces
 $interface_row"; else network_interfaces=$interface_row; fi
 done
@@ -221,6 +257,7 @@ fi
 
 iommu_status=""
 ipmi_power_w=""
+bmc_sensors=""
 if [ "$node_readings" = "1" ]; then
     iommu_status="unknown"
     if [ -r /sys/kernel/iommu_groups ] && [ -x /sys/kernel/iommu_groups ]; then
@@ -243,6 +280,13 @@ if [ "$node_readings" = "1" ]; then
             }
             /Power Measurement[[:space:]]*:/ && !/:[[:space:]]*Active[[:space:]]*$/ { inactive = 1 }
             END { if (!inactive) print watts }')
+        bmc_sensors=$(LC_ALL=C timeout 5 ipmitool -I open sdr elist 2>/dev/null)
+        sensor_status=$?
+        # A timeout can still produce usable complete rows. Only retry on
+        # immediate command failure without readings (e.g. device permissions).
+        if [ -z "$bmc_sensors" ] && [ "$sensor_status" -ne 0 ] && [ "$sensor_status" -ne 124 ] && command -v sudo >/dev/null 2>&1; then
+            bmc_sensors=$(LC_ALL=C timeout 5 sudo -n ipmitool -I open sdr elist 2>/dev/null) || true
+        fi
     fi
 fi
 
@@ -334,12 +378,19 @@ printf '\n__GPUCHECK_EOF__\n'
 printf 'GPU_METRICS<<__GPUCHECK_EOF__\n'
 printf '%s\n' "$telemetry_out"
 printf '\n__GPUCHECK_EOF__\n'
+printf 'GPU_PCIE_LINKS<<__GPUCHECK_EOF__\n'
+printf '%s\n' "$pcie_links"
+printf '\n__GPUCHECK_EOF__\n'
 printf 'PMON_OUTPUT<<__GPUCHECK_EOF__\n'
 printf '%s\n' "$pmon_out"
 printf '\n__GPUCHECK_EOF__\n'
 printf 'PS_OUTPUT<<__GPUCHECK_EOF__\n'
 printf '%s\n' "$ps_out"
 printf '\n__GPUCHECK_EOF__\n'
+printf 'BMC_SENSORS<<__GPUCHECK_EOF__\n'
+printf '%s\n' "$bmc_sensors"
+printf '__GPUCHECK_EOF__\n'
+
 printf 'NETWORK_INTERFACES<<__GPUCHECK_EOF__\n'
 printf '%s\n' "$network_interfaces"
 printf '\n__GPUCHECK_EOF__\n'

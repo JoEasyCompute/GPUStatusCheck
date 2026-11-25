@@ -49,9 +49,12 @@ export function GpuCharts({ history }: { history: ProbeResult[] }) {
       {tab === "power" ? (
         <>
           <LineChart
-            ariaLabel="Total GPU power consumption over time"
-            emptyText="No total GPU power history recorded."
-            lines={[{ label: "Total", color: chartColors[0], points: powerSeries.total }]}
+            ariaLabel="Total GPU and IPMI chassis power consumption over time"
+            emptyText="No GPU or IPMI chassis power history recorded."
+            lines={[
+              { label: "Total GPU", color: chartColors[0], points: powerSeries.total },
+              { label: "IPMI chassis", color: chartColors[1], points: buildProbeFieldSeries(history, (entry) => entry.ipmiPowerW) },
+            ]}
             unit="W"
             {...chartProps}
           />

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { GpuProcess, MachineWithLatest, ProbeResult } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
+import { GpuPcieLinks } from "./GpuPcieLinks";
 import { GpuCharts } from "./PowerCharts";
 import { fetchJsonArray } from "./api";
 import { NetworkInterfacesSection } from "./NetworkInterfacesSection";
@@ -116,7 +117,29 @@ function DetailPane({ machine, history, processes, onSelectGpu }: { machine: Mac
         ) : null}
         <div><dt>Notes</dt><dd>{formatMachineNotes(machine)}</dd></div>
       </dl>
+      <GpuPcieLinks metrics={latest?.gpuMetrics ?? []} />
       <NetworkInterfacesSection snapshots={machine.networkInterfaceSnapshots ?? []} />
+      <details className="detail-section">
+        <summary>BMC cooling and power supplies</summary>
+        {nodeReadings?.bmcSensors?.length ? (
+          <div className="network-interface-scroll">
+            <p>Observed {formatTime(nodeReadings.observedAt)}</p>
+            <table className="network-interface-table">
+              <thead><tr><th>Sensor</th><th>Type</th><th>Reading</th><th>Status</th></tr></thead>
+              <tbody>
+                {nodeReadings.bmcSensors.map((sensor) => (
+                  <tr key={sensor.id}>
+                    <td>{sensor.name}</td>
+                    <td>{{ inlet: "Inlet temperature", fan: "Cooling", psu: "Power supply" }[sensor.kind]}</td>
+                    <td>{sensor.reading || "-"}</td>
+                    <td>{sensor.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <p>No cooling or power supply readings available.</p>}
+      </details>
       {current?.sshOk === false && machine.lastSuccessful ? (
         <p className="empty-chart">
           SSH failed at {formatTime(current.checkedAt)}. Showing the {formatStatus(machine.lastSuccessful.status).toLowerCase()} snapshot last seen at {formatTime(machine.lastSuccessful.checkedAt)}.

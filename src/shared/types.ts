@@ -17,11 +17,25 @@ export type Machine = {
 
 export type IommuStatus = "enabled" | "inactive" | "unknown";
 
+export const nicCounterKeys = ["rxErrors", "txErrors", "rxDropped", "txDropped"] as const;
+export type NicCounters = Partial<Record<typeof nicCounterKeys[number], number>>;
+
+export type BmcSensor = {
+  id: string;
+  name: string;
+  kind: "inlet" | "fan" | "psu";
+  status: string;
+  reading: string;
+};
+
 export type NetworkInterface = {
   name: string;
   macAddress: string;
   ipAddresses: string[];
   publicIpv4?: string;
+  speedMbps?: number;
+  counters?: NicCounters;
+  counterDeltas?: NicCounters;
   state: string;
 };
 
@@ -32,6 +46,7 @@ export type NetworkInterfaceSnapshot = {
   bmcIpAddress?: string;
   iommuStatus?: IommuStatus;
   ipmiPowerW?: number;
+  bmcSensors?: BmcSensor[];
 };
 
 export type FleetHistoryPoint = {
@@ -94,6 +109,10 @@ export type GpuMetric = {
   powerLimitW?: number | null;
   graphicsClockMhz?: number | null;
   memoryClockMhz?: number | null;
+  pcieLinkSpeedGtps?: number | null;
+  pcieMaxLinkSpeedGtps?: number | null;
+  pcieLinkWidth?: number | null;
+  pcieMaxLinkWidth?: number | null;
 };
 
 export type GpuIdentity = {
@@ -186,6 +205,7 @@ export type ProbeResult = {
   bmcIpAddress?: string;
   iommuStatus?: IommuStatus;
   ipmiPowerW?: number;
+  bmcSensors?: BmcSensor[];
 };
 
 export type PollRun = {

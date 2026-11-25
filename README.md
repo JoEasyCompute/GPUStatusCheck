@@ -190,7 +190,11 @@ SQLite, and serves a React dashboard with:
   observed by `https://ifconfig.me/ip` through each eligible interface. NAT
   can give multiple interfaces the same public address. The lookups are
   best-effort and time-limited. These readings are visible to all dashboard
-  viewers.
+  viewers. Machine details also show per-GPU negotiated and maximum PCIe
+  link width/speed when Linux exposes them, NIC link speed and cumulative RX/TX
+  errors and drops (with changes from the previous comparable snapshot), and
+  available BMC inlet temperature, cooling and PSU sensor readings. The Power
+  tab charts chassis power alongside total GPU power as live samples accumulate.
 - GPU lifecycle tracking by UUID: every telemetry row records the GPU's UUID,
   an identity table follows each physical card across machines/slots/tenants
   (sighting segments), per-GPU job rows carry the owner renting the GPU at

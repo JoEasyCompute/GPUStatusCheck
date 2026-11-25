@@ -17,6 +17,14 @@ describe("machine status filter", () => {
     expect(matchesMachineStatusFilter("ok", "stale_ssh_key", "REMOTE HOST IDENTIFICATION HAS CHANGED")).toBe(false);
   });
 
+  it("matches a confirmed lack of active IOMMU groups across machine statuses", () => {
+    expect(matchesMachineStatusFilter("ok", "iommu_not_enabled", undefined, "inactive")).toBe(true);
+    expect(matchesMachineStatusFilter("ssh_failed", "iommu_not_enabled", undefined, "inactive")).toBe(true);
+    expect(matchesMachineStatusFilter("ok", "iommu_not_enabled", undefined, "enabled")).toBe(false);
+    expect(matchesMachineStatusFilter("ok", "iommu_not_enabled", undefined, "unknown")).toBe(false);
+    expect(matchesMachineStatusFilter("ok", "iommu_not_enabled")).toBe(false);
+  });
+
   it("selects exactly the machines visible under the combined filter", () => {
     const machines = [
       machine(1, "ok"),

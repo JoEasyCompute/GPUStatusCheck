@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
+import { nicCounterKeys } from "../shared/types";
 import type {
   AgentAction,
   AgentOperation,
@@ -8,6 +9,8 @@ import type {
   AgentOperationItem,
   AgentOperationItemStatus,
   AgentState,
+  BmcSensor,
+  NicCounters,
   FleetHistoryPoint,
   GpuDailyStat,
   GpuDownNote,
@@ -111,6 +114,7 @@ export function createDatabase(dbPath: string) {
         gpu_type TEXT NOT NULL DEFAULT '',
         gpu_jobs TEXT NOT NULL DEFAULT '',
         gpu_power_w REAL,
+        ipmi_power_w REAL,
         gpu_avg_temp_c REAL,
         bus_off_suspected INTEGER NOT NULL DEFAULT 0,
         bus_off_reason TEXT NOT NULL DEFAULT '',
@@ -127,6 +131,7 @@ export function createDatabase(dbPath: string) {
         source TEXT NOT NULL CHECK(source IN ('probe', 'agent')),
         interfaces_json TEXT NOT NULL DEFAULT '[]',
         bmc_ip_address TEXT NOT NULL DEFAULT '',
+        bmc_sensors_json TEXT,
         iommu_status TEXT,
         ipmi_power_w REAL,
         observed_at TEXT NOT NULL,
@@ -170,6 +175,10 @@ export function createDatabase(dbPath: string) {
         power_limit_w REAL,
         graphics_clock_mhz INTEGER,
         memory_clock_mhz INTEGER,
+        pcie_link_speed_gtps REAL,
+        pcie_max_link_speed_gtps REAL,
+        pcie_link_width INTEGER,
+        pcie_max_link_width INTEGER,
         FOREIGN KEY(probe_result_id) REFERENCES probe_results(id)
       );
 
@@ -327,6 +336,7 @@ export function createDatabase(dbPath: string) {
     ensureColumn(db, "machines", "expected_gpu_count", "INTEGER");
     ensureColumn(db, "probe_results", "gpu_type", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "probe_results", "ssh_user", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(db, "probe_results", "ipmi_power_w", "REAL");
     ensureColumn(db, "probe_results", "net_rx_bps", "REAL");
     ensureColumn(db, "probe_results", "net_tx_bps", "REAL");
     ensureColumn(db, "probe_results", "source", "TEXT NOT NULL DEFAULT 'probe'");
@@ -339,12 +349,17 @@ export function createDatabase(dbPath: string) {
     ensureColumn(db, "probe_results", "disk_total_kb", "REAL");
     ensureColumn(db, "probe_results", "disk_used_pct", "REAL");
     ensureColumn(db, "machine_network_snapshots", "bmc_ip_address", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(db, "machine_network_snapshots", "bmc_sensors_json", "TEXT");
     ensureColumn(db, "machine_network_snapshots", "iommu_status", "TEXT");
     ensureColumn(db, "machine_network_snapshots", "ipmi_power_w", "REAL");
     ensureColumn(db, "gpu_metrics", "pci_bus_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_metrics", "power_limit_w", "REAL");
     ensureColumn(db, "gpu_metrics", "graphics_clock_mhz", "INTEGER");
     ensureColumn(db, "gpu_metrics", "memory_clock_mhz", "INTEGER");
+    ensureColumn(db, "gpu_metrics", "pcie_link_speed_gtps", "REAL");
+    ensureColumn(db, "gpu_metrics", "pcie_max_link_speed_gtps", "REAL");
+    ensureColumn(db, "gpu_metrics", "pcie_link_width", "INTEGER");
+    ensureColumn(db, "gpu_metrics", "pcie_max_link_width", "INTEGER");
     ensureColumn(db, "gpu_metrics", "uuid", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_processes", "gpu_uuid", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_processes", "owner", "TEXT NOT NULL DEFAULT ''");
@@ -417,21 +432,40 @@ export function createDatabase(dbPath: string) {
     source: NetworkInterfaceSnapshot["source"],
     observedAt: string,
     interfaces: NetworkInterface[],
-    readings: Pick<NetworkInterfaceSnapshot, "bmcIpAddress" | "iommuStatus" | "ipmiPowerW">,
+    readings: Pick<NetworkInterfaceSnapshot, "bmcIpAddress" | "iommuStatus" | "ipmiPowerW" | "bmcSensors">,
   ): void {
-    const existing = db.prepare("SELECT observed_at FROM machine_network_snapshots WHERE machine_id = ? AND source = ?")
-      .get(machineId, source) as { observed_at: string } | undefined;
+    const existing = db.prepare("SELECT observed_at, interfaces_json FROM machine_network_snapshots WHERE machine_id = ? AND source = ?")
+      .get(machineId, source) as { observed_at: string; interfaces_json: string } | undefined;
     if (existing && Date.parse(existing.observed_at) > Date.parse(observedAt)) return;
+    const previous = new Map(
+      (existing ? parseNetworkInterfacesJson(existing.interfaces_json) : []).map((iface) => [iface.name, iface]),
+    );
+    const withDeltas = interfaces.map((iface) => {
+      const old = previous.get(iface.name);
+      if (!old || !iface.macAddress || old.macAddress !== iface.macAddress) return iface;
+      const counterDeltas: NicCounters = {};
+      for (const key of nicCounterKeys) {
+        const before = old.counters?.[key];
+        const after = iface.counters?.[key];
+        if (before !== undefined && after !== undefined && after >= before) counterDeltas[key] = after - before;
+      }
+      return Object.keys(counterDeltas).length ? { ...iface, counterDeltas } : iface;
+    });
     db.prepare(`
-      INSERT INTO machine_network_snapshots (machine_id, source, interfaces_json, bmc_ip_address, iommu_status, ipmi_power_w, observed_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO machine_network_snapshots (machine_id, source, interfaces_json, bmc_ip_address, bmc_sensors_json, iommu_status, ipmi_power_w, observed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(machine_id, source) DO UPDATE SET
         interfaces_json = excluded.interfaces_json,
         bmc_ip_address = excluded.bmc_ip_address,
+        bmc_sensors_json = excluded.bmc_sensors_json,
         iommu_status = excluded.iommu_status,
         ipmi_power_w = excluded.ipmi_power_w,
         observed_at = excluded.observed_at
-    `).run(machineId, source, JSON.stringify(interfaces), readings.bmcIpAddress ?? "", readings.iommuStatus ?? null, readings.ipmiPowerW ?? null, observedAt);
+    `).run(
+      machineId, source, JSON.stringify(withDeltas), readings.bmcIpAddress ?? "",
+      readings.bmcSensors?.length ? JSON.stringify(readings.bmcSensors) : null,
+      readings.iommuStatus ?? null, readings.ipmiPowerW ?? null, observedAt,
+    );
   }
 
   function insertProbeResult(pollRunId: number, machineId: number, result: ProbeResult): number {
@@ -439,14 +473,14 @@ export function createDatabase(dbPath: string) {
     const info = db.prepare(`
       INSERT INTO probe_results (
         poll_run_id, machine_id, checked_at, status, ssh_ok, ssh_error, ssh_user, remote_host, uptime,
-        nvidia_smi_rc, gpu_count, gpu_type, gpu_jobs, gpu_power_w, gpu_avg_temp_c, net_rx_bps, net_tx_bps, bus_off_suspected,
+        nvidia_smi_rc, gpu_count, gpu_type, gpu_jobs, gpu_power_w, ipmi_power_w, gpu_avg_temp_c, net_rx_bps, net_tx_bps, bus_off_suspected,
         cpu_model, cpu_cores, cpu_util_pct, mem_total_kb, mem_used_pct, disk_total_kb, disk_used_pct,
         source, agent_version,
         bus_off_reason, kernel_hits, nvidia_smi_output, nvidia_smi_error, duration_ms
       )
       VALUES (
         @pollRunId, @machineId, @checkedAt, @status, @sshOk, @sshError, @sshUser, @remoteHost, @uptime,
-        @nvidiaSmiRc, @gpuCount, @gpuType, @gpuJobs, @gpuPowerW, @gpuAvgTempC, @netRxBps, @netTxBps, @busOffSuspected,
+        @nvidiaSmiRc, @gpuCount, @gpuType, @gpuJobs, @gpuPowerW, @ipmiPowerW, @gpuAvgTempC, @netRxBps, @netTxBps, @busOffSuspected,
         @cpuModel, @cpuCores, @cpuUtilPct, @memTotalKb, @memUsedPct, @diskTotalKb, @diskUsedPct,
         'probe', @agentVersion,
         @busOffReason, @kernelHits, @nvidiaSmiOutput, @nvidiaSmiError, @durationMs
@@ -466,6 +500,7 @@ export function createDatabase(dbPath: string) {
       gpuType: result.gpuType ?? "",
       gpuJobs: result.gpuJobs ?? "",
       gpuPowerW: parseNullableNumber(result.gpuPowerW),
+      ipmiPowerW: result.sshOk ? result.ipmiPowerW ?? null : null,
       gpuAvgTempC: parseNullableNumber(result.gpuAvgTempC),
       netRxBps: result.netRxBps ?? null,
       netTxBps: result.netTxBps ?? null,
@@ -539,7 +574,7 @@ export function createDatabase(dbPath: string) {
   function listMachines(): MachineWithLatest[] {
     const rows = db.prepare(`
       SELECT m.*, pr.id AS latest_id, pr.checked_at, pr.status, pr.ssh_ok, pr.ssh_error, pr.ssh_user, pr.remote_host,
-             pr.uptime, pr.nvidia_smi_rc, pr.gpu_count, pr.gpu_type, pr.gpu_jobs, pr.gpu_power_w,
+             pr.uptime, pr.nvidia_smi_rc, pr.gpu_count, pr.gpu_type, pr.gpu_jobs, pr.gpu_power_w, pr.ipmi_power_w,
              pr.gpu_avg_temp_c, pr.net_rx_bps, pr.net_tx_bps, pr.bus_off_suspected, pr.bus_off_reason, pr.duration_ms,
              pr.cpu_model, pr.cpu_cores, pr.cpu_util_pct, pr.mem_total_kb, pr.mem_used_pct, pr.disk_total_kb, pr.disk_used_pct,
              pr.source, pr.agent_version
@@ -568,6 +603,7 @@ export function createDatabase(dbPath: string) {
         observedAt: row.observed_at,
         interfaces: parseNetworkInterfacesJson(row.interfaces_json),
         bmcIpAddress: row.bmc_ip_address || undefined,
+        bmcSensors: row.bmc_sensors_json ? JSON.parse(row.bmc_sensors_json) as BmcSensor[] : undefined,
         iommuStatus: row.iommu_status ?? undefined,
         ipmiPowerW: row.ipmi_power_w ?? undefined,
       });
@@ -591,7 +627,7 @@ export function createDatabase(dbPath: string) {
       SELECT id, poll_run_id, machine_id, checked_at, status,
              ssh_ok, ssh_error, ssh_user, remote_host, uptime,
              nvidia_smi_rc, gpu_count, gpu_type, gpu_jobs,
-             gpu_power_w, gpu_avg_temp_c, net_rx_bps, net_tx_bps,
+             gpu_power_w, ipmi_power_w, gpu_avg_temp_c, net_rx_bps, net_tx_bps,
              cpu_model, cpu_cores, cpu_util_pct, mem_total_kb,
              mem_used_pct, disk_total_kb, disk_used_pct,
              bus_off_suspected, bus_off_reason,
@@ -1467,11 +1503,13 @@ function insertMetricRow(db: Sqlite, pollRunId: number, machineId: number, probe
   db.prepare(`
     INSERT INTO gpu_metrics (
       probe_result_id, machine_id, poll_run_id, checked_at, gpu_index, uuid, pci_bus_id,
-      gpu_util, mem_util, temp_c, power_w, power_limit_w, graphics_clock_mhz, memory_clock_mhz
+      gpu_util, mem_util, temp_c, power_w, power_limit_w, graphics_clock_mhz, memory_clock_mhz,
+      pcie_link_speed_gtps, pcie_max_link_speed_gtps, pcie_link_width, pcie_max_link_width
     )
     VALUES (
       @probeResultId, @machineId, @pollRunId, @checkedAt, @gpuIndex, @uuid, @pciBusId,
-      @gpuUtil, @memUtil, @tempC, @powerW, @powerLimitW, @graphicsClockMhz, @memoryClockMhz
+      @gpuUtil, @memUtil, @tempC, @powerW, @powerLimitW, @graphicsClockMhz, @memoryClockMhz,
+      @pcieLinkSpeedGtps, @pcieMaxLinkSpeedGtps, @pcieLinkWidth, @pcieMaxLinkWidth
     )
   `).run({
     probeResultId,
@@ -1488,6 +1526,10 @@ function insertMetricRow(db: Sqlite, pollRunId: number, machineId: number, probe
     powerLimitW: metric.powerLimitW ?? null,
     graphicsClockMhz: metric.graphicsClockMhz ?? null,
     memoryClockMhz: metric.memoryClockMhz ?? null,
+    pcieLinkSpeedGtps: metric.pcieLinkSpeedGtps ?? null,
+    pcieMaxLinkSpeedGtps: metric.pcieMaxLinkSpeedGtps ?? null,
+    pcieLinkWidth: metric.pcieLinkWidth ?? null,
+    pcieMaxLinkWidth: metric.pcieMaxLinkWidth ?? null,
   });
 }
 
@@ -1545,12 +1587,26 @@ function parseNetworkInterfacesJson(value: string): NetworkInterface[] {
         macAddress: row.macAddress,
         state: row.state,
         ipAddresses: row.ipAddresses,
+        ...(typeof row.speedMbps === "number" ? { speedMbps: row.speedMbps } : {}),
+        ...(row.counters ? { counters: readNicCounters(row.counters) } : {}),
+        ...(row.counterDeltas ? { counterDeltas: readNicCounters(row.counterDeltas) } : {}),
         ...(typeof row.publicIpv4 === "string" ? { publicIpv4: row.publicIpv4 } : {}),
       }];
     });
   } catch {
     return [];
   }
+}
+
+function readNicCounters(value: unknown): NicCounters {
+  const counters: NicCounters = {};
+  if (!value || typeof value !== "object") return counters;
+  const entries = value as Record<string, unknown>;
+  for (const key of nicCounterKeys) {
+    const count = entries[key];
+    if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0) counters[key] = count;
+  }
+  return counters;
 }
 
 function ensureColumn(db: Sqlite, table: string, column: string, definition: string): void {
@@ -1640,6 +1696,7 @@ type NetworkSnapshotRow = {
   source: "probe" | "agent";
   interfaces_json: string;
   bmc_ip_address: string;
+  bmc_sensors_json: string | null;
   iommu_status: IommuStatus | null;
   ipmi_power_w: number | null;
   observed_at: string;
@@ -1661,6 +1718,7 @@ type ProbeRow = {
   gpu_type: string;
   gpu_jobs: string;
   gpu_power_w: number | null;
+  ipmi_power_w: number | null;
   gpu_avg_temp_c: number | null;
   net_rx_bps: number | null;
   net_tx_bps: number | null;
@@ -1719,6 +1777,10 @@ type MetricRow = {
   power_limit_w: number | null;
   graphics_clock_mhz: number | null;
   memory_clock_mhz: number | null;
+  pcie_link_speed_gtps: number | null;
+  pcie_max_link_speed_gtps: number | null;
+  pcie_link_width: number | null;
+  pcie_max_link_width: number | null;
 };
 
 type GpuDownEventRow = {
@@ -1783,6 +1845,7 @@ function rowToMachineWithLatest(row: LatestMachineRow, db: Sqlite): MachineWithL
       gpu_type: row.gpu_type ?? "",
       gpu_jobs: row.gpu_jobs ?? "",
       gpu_power_w: row.gpu_power_w ?? null,
+      ipmi_power_w: row.ipmi_power_w ?? null,
       gpu_avg_temp_c: row.gpu_avg_temp_c ?? null,
       net_rx_bps: row.net_rx_bps ?? null,
       net_tx_bps: row.net_tx_bps ?? null,
@@ -1962,6 +2025,7 @@ function rowToProbeResult(row: ProbeRow): ProbeResult {
     gpuCount: row.gpu_count,
     gpuType: row.gpu_type,
     gpuJobs: row.gpu_jobs,
+    ipmiPowerW: row.ipmi_power_w ?? undefined,
     gpuPowerW: row.gpu_power_w === null ? "" : row.gpu_power_w.toFixed(1),
     gpuAvgTempC: row.gpu_avg_temp_c === null ? "" : row.gpu_avg_temp_c.toFixed(1),
     netRxBps: row.net_rx_bps,
@@ -2026,6 +2090,10 @@ function rowToMetric(row: MetricRow): GpuMetric {
     powerLimitW: row.power_limit_w,
     graphicsClockMhz: row.graphics_clock_mhz,
     memoryClockMhz: row.memory_clock_mhz,
+    pcieLinkSpeedGtps: row.pcie_link_speed_gtps,
+    pcieMaxLinkSpeedGtps: row.pcie_max_link_speed_gtps,
+    pcieLinkWidth: row.pcie_link_width,
+    pcieMaxLinkWidth: row.pcie_max_link_width,
   };
 }
 
