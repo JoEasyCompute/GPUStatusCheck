@@ -62,6 +62,7 @@ export function MachineDetailModal({
 
 function DetailPane({ machine, history, processes, onSelectGpu }: { machine: MachineWithLatest; history: ProbeResult[]; processes: GpuProcess[]; onSelectGpu?: (uuid: string) => void }) {
   const [processSearch, setProcessSearch] = useState("");
+  const nodeReadings = machine.networkInterfaceSnapshots?.find((snapshot) => snapshot.source === "probe");
   const current = machine.latest ?? history[0];
   const latest = current?.sshOk === false ? machine.lastSuccessful ?? current : current;
   const displayedProcesses = current?.sshOk === false && machine.lastSuccessful
@@ -95,6 +96,8 @@ function DetailPane({ machine, history, processes, onSelectGpu }: { machine: Mac
         <div><dt>SSH user</dt><dd>{latest?.sshUser || "-"}</dd></div>
         <div><dt>Uptime</dt><dd>{latest?.uptime || "-"}</dd></div>
         <div><dt>GPU type</dt><dd>{latest?.gpuType || "-"}</dd></div>
+        <div><dt>IOMMU</dt><dd>{nodeReadings?.iommuStatus === "enabled" ? "Enabled" : nodeReadings?.iommuStatus === "inactive" ? "No active groups" : "Unknown"}</dd></div>
+        <div><dt>IPMI chassis power</dt><dd>{nodeReadings?.ipmiPowerW == null ? "Unavailable" : `${nodeReadings.ipmiPowerW} W`}</dd></div>
         <div><dt>GPU jobs</dt><dd><GpuJobPills latest={latest} onSelectGpu={onSelectGpu} /></dd></div>
         <div><dt>CPU</dt><dd>{formatCpu(latest)}</dd></div>
         <div><dt>RAM</dt><dd>{formatCapacity(latest?.memTotalKb, latest?.memUsedPct)}</dd></div>

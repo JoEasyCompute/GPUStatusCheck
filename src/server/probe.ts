@@ -1,8 +1,9 @@
+import { isIPv4 } from "node:net";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { GpuMetric, GpuProcess, Machine, NetworkInterface, ProbeResult } from "../shared/types";
+import type { GpuMetric, GpuProcess, IommuStatus, Machine, NetworkInterface, ProbeResult } from "../shared/types";
 
 const BLOCK_END = "__GPUCHECK_EOF__";
 
@@ -35,6 +36,8 @@ export type ParsedProbe = {
   gpuMetrics: GpuMetric[];
   networkInterfaces?: NetworkInterface[];
   bmcIpAddress?: string;
+  iommuStatus?: IommuStatus;
+  ipmiPowerW?: number;
 };
 
 export type RunProbeOptions = {
@@ -56,7 +59,11 @@ export function parseProbeOutput(stdout: string, processArgsMaxChars: number): P
   const parsedGpuJobs = scalar(stdout, "GPU_JOBS") ?? "";
   const busOffSuspected = busOff === "1" || kernelHits.length > 0;
 
+  const iommu = scalar(stdout, "IOMMU_STATUS");
+  const ipmiPower = numericScalar(stdout, "IPMI_POWER_W");
   return {
+    iommuStatus: iommu === "enabled" || iommu === "inactive" || iommu === "unknown" ? iommu : undefined,
+    ipmiPowerW: ipmiPower !== null && ipmiPower >= 0 ? ipmiPower : undefined,
     remoteHost: scalar(stdout, "REMOTE_HOST") ?? "",
     uptime: scalar(stdout, "UPTIME_PRETTY") ?? "",
     nvidiaSmiRc: nvidiaSmiRc && /^\d+$/.test(nvidiaSmiRc) ? Number(nvidiaSmiRc) : null,
@@ -90,13 +97,14 @@ export function parseProbeOutput(stdout: string, processArgsMaxChars: number): P
 
 export function parseNetworkInterfaces(output: string): NetworkInterface[] {
   return output.split(/\r?\n/).flatMap((line) => {
-    const [name, macAddress, addresses, state] = line.split("|");
+    const [name, macAddress, addresses, state, egress] = line.split("|");
     if (!name?.trim()) return [];
     return [{
       name: name.trim(),
       macAddress: macAddress?.trim().toLowerCase() ?? "",
       ipAddresses: addresses?.split(",").map((address) => address.trim()).filter(Boolean) ?? [],
       state: state?.trim() ?? "unknown",
+      ...(egress && isIPv4(egress.trim()) ? { publicIpv4: egress.trim() } : {}),
     }];
   });
 }
@@ -238,6 +246,7 @@ async function runProbeAs(machine: Machine, options: RunProbeOptions, user: stri
     machine.name,
     machine.ip,
     options.checkLogs ? "1" : "0",
+    "1",
   ];
 
   const resultBase = {
@@ -305,6 +314,8 @@ async function runProbeAs(machine: Machine, options: RunProbeOptions, user: stri
       gpuMetrics: parsed.gpuMetrics,
       networkInterfaces: parsed.networkInterfaces,
       bmcIpAddress: parsed.bmcIpAddress,
+      iommuStatus: parsed.iommuStatus,
+      ipmiPowerW: parsed.ipmiPowerW,
     };
   } catch (error) {
     return {

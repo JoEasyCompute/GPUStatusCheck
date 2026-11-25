@@ -6,6 +6,19 @@ import { join } from "node:path";
 import { buildRemoteScript, isAuthFailure, isTransientSshFailure, normalizeGpuType, parseGpuProcesses, parseProbeOutput, runProbe, spawnWithInput } from "../src/server/probe";
 
 describe("probe parsing", () => {
+  it("parses node telemetry and validates interface egress IPv4 addresses", () => {
+    const probe = parseProbeOutput([
+      "IOMMU_STATUS=enabled", "IPMI_POWER_W=0",
+      "NETWORK_INTERFACES<<__GPUCHECK_EOF__",
+      "eth0|aa|10.1.1.2/24|up|203.0.113.9",
+      "eth1|bb||down|999.0.0.1",
+      "__GPUCHECK_EOF__",
+    ].join("\n"), 100);
+    expect(probe.iommuStatus).toBe("enabled");
+    expect(probe.ipmiPowerW).toBe(0);
+    expect(probe.networkInterfaces?.map((iface) => iface.publicIpv4)).toEqual(["203.0.113.9", undefined]);
+  });
+
   it("retries a transient SSH reset once before returning a failure", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gpu-probe-transient-retry-"));
     const fakeSsh = join(dir, "ssh");

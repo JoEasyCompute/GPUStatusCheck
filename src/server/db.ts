@@ -18,6 +18,7 @@ import type {
   GroupHistoryPoint,
   Machine,
   MachineWithLatest,
+  IommuStatus,
   NetworkInterface,
   NetworkInterfaceSnapshot,
   PollRun,
@@ -126,6 +127,8 @@ export function createDatabase(dbPath: string) {
         source TEXT NOT NULL CHECK(source IN ('probe', 'agent')),
         interfaces_json TEXT NOT NULL DEFAULT '[]',
         bmc_ip_address TEXT NOT NULL DEFAULT '',
+        iommu_status TEXT,
+        ipmi_power_w REAL,
         observed_at TEXT NOT NULL,
         PRIMARY KEY(machine_id, source),
         FOREIGN KEY(machine_id) REFERENCES machines(id) ON DELETE CASCADE
@@ -336,6 +339,8 @@ export function createDatabase(dbPath: string) {
     ensureColumn(db, "probe_results", "disk_total_kb", "REAL");
     ensureColumn(db, "probe_results", "disk_used_pct", "REAL");
     ensureColumn(db, "machine_network_snapshots", "bmc_ip_address", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(db, "machine_network_snapshots", "iommu_status", "TEXT");
+    ensureColumn(db, "machine_network_snapshots", "ipmi_power_w", "REAL");
     ensureColumn(db, "gpu_metrics", "pci_bus_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "gpu_metrics", "power_limit_w", "REAL");
     ensureColumn(db, "gpu_metrics", "graphics_clock_mhz", "INTEGER");
@@ -412,19 +417,21 @@ export function createDatabase(dbPath: string) {
     source: NetworkInterfaceSnapshot["source"],
     observedAt: string,
     interfaces: NetworkInterface[],
-    bmcIpAddress?: string,
+    readings: Pick<NetworkInterfaceSnapshot, "bmcIpAddress" | "iommuStatus" | "ipmiPowerW">,
   ): void {
     const existing = db.prepare("SELECT observed_at FROM machine_network_snapshots WHERE machine_id = ? AND source = ?")
       .get(machineId, source) as { observed_at: string } | undefined;
     if (existing && Date.parse(existing.observed_at) > Date.parse(observedAt)) return;
     db.prepare(`
-      INSERT INTO machine_network_snapshots (machine_id, source, interfaces_json, bmc_ip_address, observed_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO machine_network_snapshots (machine_id, source, interfaces_json, bmc_ip_address, iommu_status, ipmi_power_w, observed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(machine_id, source) DO UPDATE SET
         interfaces_json = excluded.interfaces_json,
         bmc_ip_address = excluded.bmc_ip_address,
+        iommu_status = excluded.iommu_status,
+        ipmi_power_w = excluded.ipmi_power_w,
         observed_at = excluded.observed_at
-    `).run(machineId, source, JSON.stringify(interfaces), bmcIpAddress ?? "", observedAt);
+    `).run(machineId, source, JSON.stringify(interfaces), readings.bmcIpAddress ?? "", readings.iommuStatus ?? null, readings.ipmiPowerW ?? null, observedAt);
   }
 
   function insertProbeResult(pollRunId: number, machineId: number, result: ProbeResult): number {
@@ -478,7 +485,7 @@ export function createDatabase(dbPath: string) {
       durationMs: result.durationMs ?? null,
     });
     if (result.sshOk && result.networkInterfaces !== undefined) {
-      replaceMachineNetworkSnapshot(machineId, "probe", checkedAt, result.networkInterfaces, result.bmcIpAddress);
+      replaceMachineNetworkSnapshot(machineId, "probe", checkedAt, result.networkInterfaces, result);
     }
     const probeResultId = Number(info.lastInsertRowid);
     const owner = (result.owner ?? "").trim();
@@ -561,6 +568,8 @@ export function createDatabase(dbPath: string) {
         observedAt: row.observed_at,
         interfaces: parseNetworkInterfacesJson(row.interfaces_json),
         bmcIpAddress: row.bmc_ip_address || undefined,
+        iommuStatus: row.iommu_status ?? undefined,
+        ipmiPowerW: row.ipmi_power_w ?? undefined,
       });
       snapshotsByMachine.set(row.machine_id, snapshots);
     }
@@ -1126,7 +1135,7 @@ export function createDatabase(dbPath: string) {
       insertMetricRow(db, pollRunId, machineId, probeResultId, checkedAt, metric);
     }
     if (parsed.networkInterfaces !== undefined) {
-      replaceMachineNetworkSnapshot(machineId, "agent", checkedAt, parsed.networkInterfaces, parsed.bmcIpAddress);
+      replaceMachineNetworkSnapshot(machineId, "agent", checkedAt, parsed.networkInterfaces, parsed);
     }
     return true;
   }
@@ -1536,6 +1545,7 @@ function parseNetworkInterfacesJson(value: string): NetworkInterface[] {
         macAddress: row.macAddress,
         state: row.state,
         ipAddresses: row.ipAddresses,
+        ...(typeof row.publicIpv4 === "string" ? { publicIpv4: row.publicIpv4 } : {}),
       }];
     });
   } catch {
@@ -1630,6 +1640,8 @@ type NetworkSnapshotRow = {
   source: "probe" | "agent";
   interfaces_json: string;
   bmc_ip_address: string;
+  iommu_status: IommuStatus | null;
+  ipmi_power_w: number | null;
   observed_at: string;
 };
 

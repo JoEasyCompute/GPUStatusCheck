@@ -184,7 +184,13 @@ SQLite, and serves a React dashboard with:
   machine status while the latest successful probe time and its GPU, process,
   CPU, memory, and disk snapshot remain visible; the Network interfaces
   section has one-click MAC and BMC IP copy controls; clicking the machine IP
-  copies a ready-to-use SSH command
+  copies a ready-to-use SSH command. Each node also shows the latest SSH
+  snapshot's IOMMU group status and instantaneous IPMI chassis power (watts,
+  when supported by the BMC). The interface table shows public IPv4 addresses
+  observed by `https://ifconfig.me/ip` through each eligible interface. NAT
+  can give multiple interfaces the same public address. The lookups are
+  best-effort and time-limited. These readings are visible to all dashboard
+  viewers.
 - GPU lifecycle tracking by UUID: every telemetry row records the GPU's UUID,
   an identity table follows each physical card across machines/slots/tenants
   (sighting segments), per-GPU job rows carry the owner renting the GPU at

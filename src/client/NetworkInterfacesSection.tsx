@@ -26,6 +26,7 @@ export function NetworkInterfacesSection({ snapshots }: { snapshots: NetworkInte
                 <th>Interface</th>
                 <th>MAC address</th>
                 <th>IP addresses</th>
+                <th>Public IPv4</th>
                 <th>Link</th>
                 <th>Source</th>
                 <th>Observed</th>
@@ -41,6 +42,9 @@ export function NetworkInterfacesSection({ snapshots }: { snapshots: NetworkInte
                       : "-"}
                   </td>
                   <td>{iface.ipAddresses.join(", ") || "-"}</td>
+                  <td>{iface.publicIpv4
+                    ? <CopyValueButton value={iface.publicIpv4} label={`${iface.name} public IPv4`} />
+                    : "-"}</td>
                   <td>{iface.state || "unknown"}</td>
                   <td>{iface.source === "probe" ? "SSH" : "Agent"}</td>
                   <td>{formatTime(iface.observedAt)}</td>

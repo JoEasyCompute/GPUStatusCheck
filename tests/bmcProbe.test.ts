@@ -25,9 +25,24 @@ describe("BMC IP probe", () => {
     expect(output.status).toBe(0);
     expect(output.stdout).toContain("BMC_IP_ADDRESS=10.10.20.228");
   });
+  it.each([
+    ["Active", "IPMI_POWER_W=425"],
+    ["Not Available", "IPMI_POWER_W="],
+  ])("handles DCMI chassis power with measurement status %s", (status, expected) => {
+    const output = runProbeWithIpmitool([
+      'if [ "$3" = dcmi ]; then',
+      `  printf '%s\\n' 'Instantaneous power reading: 425 Watts' 'Power Measurement: ${status}'`,
+      "else",
+      "  printf '%s\\n' 'IP Address: 192.168.20.42'",
+      "fi",
+    ].join("\n"), false, true);
+    expect(output.status).toBe(0);
+    expect(output.stdout.split("\n")).toContain(expected);
+  });
+
 });
 
-function runProbeWithIpmitool(body: string, withSudo = false) {
+function runProbeWithIpmitool(body: string, withSudo = false, nodeReadings = false) {
   const dir = mkdtempSync(join(tmpdir(), "gpu-bmc-probe-"));
   const command = join(dir, "ipmitool");
   writeFileSync(command, `#!/bin/sh\n${body}\n`);
@@ -40,7 +55,9 @@ function runProbeWithIpmitool(body: string, withSudo = false) {
     writeFileSync(sudo, "#!/bin/sh\n[ \"$1\" = -n ] && shift\nBMC_SUDO=yes; export BMC_SUDO\nexec \"$@\"\n");
     chmodSync(sudo, 0o755);
   }
-  return spawnSync("sh", [resolve("scripts/remote-probe.sh"), "alpha", "local", "0"], {
+  const curl = join(dir, "curl");
+  writeFileSync(curl, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  return spawnSync("sh", [resolve("scripts/remote-probe.sh"), "alpha", "local", "0", nodeReadings ? "1" : "0"], {
     encoding: "utf8",
     env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` },
   });

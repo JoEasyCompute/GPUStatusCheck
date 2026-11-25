@@ -15,10 +15,13 @@ export type Machine = {
   updatedAt?: string;
 };
 
+export type IommuStatus = "enabled" | "inactive" | "unknown";
+
 export type NetworkInterface = {
   name: string;
   macAddress: string;
   ipAddresses: string[];
+  publicIpv4?: string;
   state: string;
 };
 
@@ -27,6 +30,8 @@ export type NetworkInterfaceSnapshot = {
   observedAt: string;
   interfaces: NetworkInterface[];
   bmcIpAddress?: string;
+  iommuStatus?: IommuStatus;
+  ipmiPowerW?: number;
 };
 
 export type FleetHistoryPoint = {
@@ -179,6 +184,8 @@ export type ProbeResult = {
   gpuMetrics?: GpuMetric[];
   networkInterfaces?: NetworkInterface[];
   bmcIpAddress?: string;
+  iommuStatus?: IommuStatus;
+  ipmiPowerW?: number;
 };
 
 export type PollRun = {

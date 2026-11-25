@@ -1,7 +1,7 @@
 #!/bin/sh
 # Remote GPU probe script, shared by gpu_status_check.py and the Node
 # dashboard server (src/server/probe.ts). Both pipe this file to
-# `ssh <host> sh -s -- <name> <ip> <check_logs>`.
+# `ssh <host> sh -s -- <name> <ip> <check_logs> <node_readings>`.
 #
 # All command output is captured in shell variables rather than temp files:
 # on a host with a full disk, temp-file writes fail silently and the probe
@@ -11,6 +11,7 @@ set -u
 machine_name=${1:-unknown}
 machine_ip=${2:-unknown}
 check_logs=${3:-1}
+node_readings=${4:-0}
 remote_host=$(hostname 2>/dev/null || echo unknown)
 
 # Read-only presence check for the optional on-host agent; hosts without it
@@ -151,6 +152,11 @@ fi
 # Interface identity follows the same interface-name filter used for the
 # aggregate network rates above, so each row explains which links contribute.
 network_interfaces=""
+egress_deadline=0
+if [ "$node_readings" = "1" ] && command -v curl >/dev/null 2>&1; then
+    egress_start=$(date +%s)
+    if [ -n "$egress_start" ]; then egress_deadline=$((egress_start + 8)); fi
+fi
 for iface_path in /sys/class/net/*; do
     [ -d "$iface_path" ] || continue
     iface=${iface_path##*/}
@@ -167,7 +173,20 @@ for iface_path in /sys/class/net/*; do
             }
         } END { print addresses }') || iface_addresses=""
     fi
-    interface_row="$iface|$mac_address|$iface_addresses|$iface_state"
+    public_ipv4=""
+    # Limit lookups to interfaces with an IPv4 address and bound both each
+    # request and the time spent on nodes with many interfaces.
+    case "$iface_addresses" in
+        *.*.*.*/*)
+            if [ "$egress_deadline" -gt 0 ] && [ "$(date +%s)" -lt "$egress_deadline" ]; then
+                egress_response=$(curl -q -4fsS --noproxy '*' --max-time 2 --max-filesize 64 \
+                    --interface "if!$iface" https://ifconfig.me/ip 2>/dev/null) || egress_response=""
+                public_ipv4=$(printf '%s\n' "$egress_response" | awk '
+                    NR == 1 && /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ { address = $0 }
+                    END { if (NR == 1) print address }')
+            fi ;;
+    esac
+    interface_row="$iface|$mac_address|$iface_addresses|$iface_state|${public_ipv4}"
     if [ -n "$network_interfaces" ]; then network_interfaces="$network_interfaces
 $interface_row"; else network_interfaces=$interface_row; fi
 done
@@ -198,6 +217,33 @@ if command -v ipmitool >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; th
     case "$bmc_ip_address" in
         0.0.0.0|255.255.255.255) bmc_ip_address="" ;;
     esac
+fi
+
+iommu_status=""
+ipmi_power_w=""
+if [ "$node_readings" = "1" ]; then
+    iommu_status="unknown"
+    if [ -r /sys/kernel/iommu_groups ] && [ -x /sys/kernel/iommu_groups ]; then
+        iommu_status="inactive"
+        for iommu_group in /sys/kernel/iommu_groups/*; do
+            [ -d "$iommu_group" ] || continue
+            iommu_status="enabled"
+            break
+        done
+    fi
+    if command -v ipmitool >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+        power_output=$(LC_ALL=C timeout 3 ipmitool -I open dcmi power reading 2>/dev/null) || power_output=""
+        if [ -z "$power_output" ] && command -v sudo >/dev/null 2>&1; then
+            power_output=$(LC_ALL=C timeout 3 sudo -n ipmitool -I open dcmi power reading 2>/dev/null) || power_output=""
+        fi
+        ipmi_power_w=$(printf '%s\n' "$power_output" | awk '
+            /^[[:space:]]*Instantaneous power reading[[:space:]]*:/ {
+                sub(/^[^:]*:[[:space:]]*/, "")
+                if ($1 ~ /^[0-9]+([.][0-9]+)?$/ && $2 == "Watts") watts = $1
+            }
+            /Power Measurement[[:space:]]*:/ && !/:[[:space:]]*Active[[:space:]]*$/ { inactive = 1 }
+            END { if (!inactive) print watts }')
+    fi
 fi
 
 cpu_model=""
@@ -272,6 +318,8 @@ echo "DISK_TOTAL_KB=$disk_total_kb"
 echo "DISK_USED_PCT=$disk_used_pct"
 echo "AGENT_VERSION=$agent_version"
 echo "BMC_IP_ADDRESS=$bmc_ip_address"
+echo "IOMMU_STATUS=$iommu_status"
+echo "IPMI_POWER_W=$ipmi_power_w"
 if [ -n "$kernel_hits" ]; then echo "BUS_OFF=1"; else echo "BUS_OFF=0"; fi
 
 printf 'NVIDIA_SMI_OUTPUT<<__GPUCHECK_EOF__\n'
