@@ -36,7 +36,13 @@ export function GpuJobPills({ latest, onSelectGpu }: { latest?: ProbeResult; onS
             <span className="gpu-tooltip" role="tooltip">
               <strong>GPU {gpuIndex}</strong>
               <span>UUID: {metric?.uuid || "-"}</span>
-              <span>PCIe: {metric?.pciBusId || "-"}</span>
+              <span>PCIe address: {metric?.pciBusId || "-"}</span>
+              {metric && (metric.pcieLinkWidth != null || metric.pcieMaxLinkWidth != null) ? (
+                <span>PCIe width (current / max): {formatLinkWidth(metric.pcieLinkWidth)} / {formatLinkWidth(metric.pcieMaxLinkWidth)}</span>
+              ) : null}
+              {metric && (metric.pcieLinkSpeedGtps != null || metric.pcieMaxLinkSpeedGtps != null) ? (
+                <span>PCIe speed (current / max): {formatNullable(metric.pcieLinkSpeedGtps, " GT/s")} / {formatNullable(metric.pcieMaxLinkSpeedGtps, " GT/s")}</span>
+              ) : null}
               <span>Status: {pillStatusLabel(state)}</span>
               <span>GPU util: {formatNullable(metric?.gpuUtil, "%")}</span>
               <span>Mem util: {formatNullable(metric?.memUtil, "%")}</span>
@@ -56,6 +62,10 @@ export function GpuJobPills({ latest, onSelectGpu }: { latest?: ProbeResult; onS
       })}
     </div>
   );
+}
+
+function formatLinkWidth(width: number | null | undefined): string {
+  return width == null ? "-" : `×${width}`;
 }
 
 function pillClass(state: string): string {

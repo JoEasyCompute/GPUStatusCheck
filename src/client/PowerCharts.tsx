@@ -4,7 +4,7 @@ import { chartColors, LineChart } from "./LineChart";
 import { buildGpuMetricSeries, buildNetworkChartSeries, buildPowerChartSeries, buildProbeFieldSeries } from "./powerChartData";
 import { useTimeWindow } from "./useTimeWindow";
 
-type MetricTab = "power" | "temp" | "util" | "network" | "system";
+type MetricTab = "power" | "temp" | "util" | "network" | "system" | "ipmi";
 
 const tabs: Array<{ id: MetricTab; label: string }> = [
   { id: "power", label: "Power" },
@@ -12,6 +12,7 @@ const tabs: Array<{ id: MetricTab; label: string }> = [
   { id: "util", label: "Utilization" },
   { id: "network", label: "Network" },
   { id: "system", label: "System" },
+  { id: "ipmi", label: "IPMI Power" },
 ];
 
 export function GpuCharts({ history }: { history: ProbeResult[] }) {
@@ -49,12 +50,9 @@ export function GpuCharts({ history }: { history: ProbeResult[] }) {
       {tab === "power" ? (
         <>
           <LineChart
-            ariaLabel="Total GPU and IPMI chassis power consumption over time"
-            emptyText="No GPU or IPMI chassis power history recorded."
-            lines={[
-              { label: "Total GPU", color: chartColors[0], points: powerSeries.total },
-              { label: "IPMI chassis", color: chartColors[1], points: buildProbeFieldSeries(history, (entry) => entry.ipmiPowerW) },
-            ]}
+            ariaLabel="Total GPU power consumption over time"
+            emptyText="No total GPU power history recorded."
+            lines={[{ label: "Total GPU", color: chartColors[0], points: powerSeries.total }]}
             unit="W"
             {...chartProps}
           />
@@ -119,6 +117,16 @@ export function GpuCharts({ history }: { history: ProbeResult[] }) {
           {...chartProps}
         />
       ) : null}
+      {tab === "ipmi" ? (
+        <LineChart
+          ariaLabel="IPMI chassis power consumption over time"
+          emptyText="No IPMI chassis power history recorded."
+          lines={[{ label: "IPMI chassis", color: chartColors[1], points: buildProbeFieldSeries(history, (entry) => entry.ipmiPowerW) }]}
+          unit="W"
+          {...chartProps}
+        />
+      ) : null}
+
     </div>
   );
 }

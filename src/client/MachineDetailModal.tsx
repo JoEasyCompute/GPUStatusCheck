@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import type { GpuProcess, MachineWithLatest, ProbeResult } from "../shared/types";
 import { formatStatus, formatTime } from "./formatters";
 import { GpuJobPills } from "./GpuJobPills";
-import { GpuPcieLinks } from "./GpuPcieLinks";
 import { GpuCharts } from "./PowerCharts";
 import { fetchJsonArray } from "./api";
 import { NetworkInterfacesSection } from "./NetworkInterfacesSection";
@@ -117,8 +116,18 @@ function DetailPane({ machine, history, processes, onSelectGpu }: { machine: Mac
         ) : null}
         <div><dt>Notes</dt><dd>{formatMachineNotes(machine)}</dd></div>
       </dl>
-      <GpuPcieLinks metrics={latest?.gpuMetrics ?? []} />
+      {current?.sshOk === false && machine.lastSuccessful ? (
+        <p className="empty-chart">
+          SSH failed at {formatTime(current.checkedAt)}. Showing the {formatStatus(machine.lastSuccessful.status).toLowerCase()} snapshot last seen at {formatTime(machine.lastSuccessful.checkedAt)}.
+        </p>
+      ) : null}
+      {latest?.kernelHits ? <pre className="evidence-block">{latest.kernelHits}</pre> : null}
+
       <NetworkInterfacesSection snapshots={machine.networkInterfaceSnapshots ?? []} />
+      <details className="detail-section" open>
+        <summary>GPU history</summary>
+        <GpuCharts history={history} />
+      </details>
       <details className="detail-section">
         <summary>BMC cooling and power supplies</summary>
         {nodeReadings?.bmcSensors?.length ? (
@@ -139,17 +148,6 @@ function DetailPane({ machine, history, processes, onSelectGpu }: { machine: Mac
             </table>
           </div>
         ) : <p>No cooling or power supply readings available.</p>}
-      </details>
-      {current?.sshOk === false && machine.lastSuccessful ? (
-        <p className="empty-chart">
-          SSH failed at {formatTime(current.checkedAt)}. Showing the {formatStatus(machine.lastSuccessful.status).toLowerCase()} snapshot last seen at {formatTime(machine.lastSuccessful.checkedAt)}.
-        </p>
-      ) : null}
-      {latest?.kernelHits ? <pre className="evidence-block">{latest.kernelHits}</pre> : null}
-
-      <details className="detail-section" open>
-        <summary>GPU history</summary>
-        <GpuCharts history={history} />
       </details>
 
       <details className="detail-section">
